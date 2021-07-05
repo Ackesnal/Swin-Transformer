@@ -228,7 +228,11 @@ def update_config(config, args):
         config.EVAL_MODE = True
     if args.throughput:
         config.THROUGHPUT_MODE = True
-
+    if args.window_size:
+        if type(args.window_size) == str:
+            args.window_size=eval(args.window_size)
+        config.MODEL.SWIN.WINDOW_SIZE = args.window_size
+        config.MODEL.SWIN_MLP.WINDOW_SIZE = args.window_size
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank
 
