@@ -385,7 +385,7 @@ class BasicLayer(nn.Module):
             for w in window_size:
                 if w > input_resolution[0] or w > input_resolution[1]:
                     continue
-                else：
+                else:
                     cur_window_sizes.append(w)
             print(input_resolution, cur_window_sizes)
             print("yes\n\n\n")
