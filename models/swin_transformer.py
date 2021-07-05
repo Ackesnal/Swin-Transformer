@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+import random
 
 
 class Mlp(nn.Module):
@@ -368,6 +369,7 @@ class BasicLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
 
         # build blocks
+        print( type(window_size))
         if type(window_size) == int:
             self.blocks = nn.ModuleList([SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                          num_heads=num_heads, window_size=window_size,
@@ -379,7 +381,25 @@ class BasicLayer(nn.Module):
                                          norm_layer=norm_layer)
                                          for i in range(depth)])
         elif type(window_size) == list:
-            print("yes")
+            cur_window_sizes = []
+            for w in window_size:
+                if w > input_resolution[0] or w > input_resolution[1]:
+                    continue
+                else：
+                    cur_window_sizes.append(w)
+            print(input_resolution, cur_window_sizes)
+            print("yes\n\n\n")
+            self.blocks = nn.ModuleList()
+            for i in range(depth):
+                cur_window_size = random.choice(cur_window_sizes)
+                self.blocks.append(SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                                        num_heads=num_heads, window_size= cur_window_size,
+                                                        shift_size=0 if (i % 2 == 0) else cur_window_size // 2,
+                                                        mlp_ratio=mlp_ratio,
+                                                        qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                                        drop=drop, attn_drop=attn_drop,
+                                                        drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                                        norm_layer=norm_layer))
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
