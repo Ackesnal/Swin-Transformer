@@ -43,6 +43,8 @@ def parse_option():
         nargs='+',
     )
 
+    parser.add_argument('--window-size', default=None, help="window size")
+
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
     parser.add_argument('--data-path', type=str, help='path to dataset')
