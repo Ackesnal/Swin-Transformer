@@ -217,7 +217,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         norm_meter.update(grad_norm)
         batch_time.update(time.time() - end)
         end = time.time()
-
+        
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]['lr']
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
