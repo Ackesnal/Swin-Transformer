@@ -269,7 +269,12 @@ class SwinTransformerBlock(nn.Module):
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
         return x
-
+    
+    def change_window_size(self, window_size):
+        self.window_size = window_size
+        self.shift_size = window_size // 2
+        return window_size
+    
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
                f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
@@ -369,7 +374,6 @@ class BasicLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
 
         # build blocks
-        print( type(window_size))
         if type(window_size) == int:
             self.blocks = nn.ModuleList([SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                          num_heads=num_heads, window_size=window_size,
@@ -387,8 +391,6 @@ class BasicLayer(nn.Module):
                     continue
                 else:
                     cur_window_sizes.append(w)
-            print(input_resolution, cur_window_sizes)
-            print("yes\n\n\n")
             self.blocks = nn.ModuleList()
             for i in range(depth):
                 cur_window_size = random.choice(cur_window_sizes)
@@ -415,7 +417,19 @@ class BasicLayer(nn.Module):
         if self.downsample is not None:
             x = self.downsample(x)
         return x
-
+    
+    def change_window_size(self, window_size):
+        cur_window_sizes = []
+        for w in window_size:
+            if w > self.input_resolution[0] or w > self.input_resolution[1]:
+                continue
+            else:
+                cur_window_sizes.append(w)
+        ret_window_sizes = []
+        for blk in self.blocks:
+            ret_window_sizes.append(blk.change_window_size(random.choice(cur_window_sizes)))
+        return ret_window_sizes
+    
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
 
@@ -517,6 +531,7 @@ class SwinTransformer(nn.Module):
         self.patch_norm = patch_norm
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
+        self.window_size = window_size
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
@@ -590,6 +605,12 @@ class SwinTransformer(nn.Module):
         x = self.avgpool(x.transpose(1, 2))  # B C 1
         x = torch.flatten(x, 1)
         return x
+
+    def change_window_size(self):
+        ret_window_sizes = []
+        for layer in self.layers:
+            ret_window_sizes.append(layer.change_window_size(self.window_size))
+        return ret_window_sizes
 
     def forward(self, x):
         x = self.forward_features(x)
