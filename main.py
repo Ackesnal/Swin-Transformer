@@ -133,7 +133,8 @@ def main(config):
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
-        #print(model.module.change_window_size())
+        if type(config.MODEL.SWIN.WINDOW_SIZE)==list:
+            print(model.module.change_window_size())
     
         data_loader_train.sampler.set_epoch(epoch)
 
