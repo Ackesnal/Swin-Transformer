@@ -7,6 +7,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import random
@@ -41,6 +42,14 @@ def window_partition(x, window_size):
         windows: (num_windows*B, window_size, window_size, C)
     """
     B, H, W, C = x.shape
+    if H % window_size != 0 or W % window_size != 0:
+        pad_u = (window_size - H % window_size) // 2
+        pad_d = (window_size - H % window_size) - pad_d
+        pad_l = (window_size - W % window_size) // 2
+        pad_r = (window_size - W % window_size) - pad_l
+        x = F.pad(x.permute(0,3,1,2), (pad_l, pad_r, pad_u, pad_d), "constant", 0).permute(0,2,3,1).contiguous()
+        
+    B, H, W, C = x.shape
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     return windows
@@ -57,9 +66,20 @@ def window_reverse(windows, window_size, H, W):
     Returns:
         x: (B, H, W, C)
     """
-    B = int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
-    x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
+    
+    if H % window_size != 0 or W % window_size != 0:
+        cur_H = (H // window_size + 1) * window_size
+        cur_W = (W // window_size + 1) * window_size
+        B = int(windows.shape[0] / (cur_H * cur_W / window_size / window_size))
+        x = windows.view(B, cur_H // window_size, cur_W // window_size, window_size, window_size, -1)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, cur_H, cur_W, -1)
+        pad_u = (window_size - H % window_size) // 2
+        pad_l = (window_size - W % window_size) // 2
+        x = x[:, pad_u:pad_u+H, pad_l:pad_l+W, :]
+    else:
+        B = int(windows.shape[0] / (H * W / window_size / window_size))
+        x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
 
@@ -251,18 +271,20 @@ class SwinTransformerBlock(nn.Module):
             shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
         else:
             shifted_x = x
-
+        
+        print("before: ", x_windows.shape)
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
-
+        print("inter: ", x_windows.shape)
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
         shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
-
+        print("after: ", x_windows.shape)
+        
         # reverse cyclic shift
         if self.shift_size > 0:
             x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
