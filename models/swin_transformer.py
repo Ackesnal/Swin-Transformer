@@ -44,7 +44,7 @@ def window_partition(x, window_size):
     B, H, W, C = x.shape
     if H % window_size != 0 or W % window_size != 0:
         pad_u = (window_size - H % window_size) // 2
-        pad_d = (window_size - H % window_size) - pad_d
+        pad_d = (window_size - H % window_size) - pad_u
         pad_l = (window_size - W % window_size) // 2
         pad_r = (window_size - W % window_size) - pad_l
         x = F.pad(x.permute(0,3,1,2), (pad_l, pad_r, pad_u, pad_d), "constant", 0).permute(0,2,3,1).contiguous()
@@ -75,7 +75,7 @@ def window_reverse(windows, window_size, H, W):
         x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, cur_H, cur_W, -1)
         pad_u = (window_size - H % window_size) // 2
         pad_l = (window_size - W % window_size) // 2
-        x = x[:, pad_u:pad_u+H, pad_l:pad_l+W, :]
+        x = x[:, pad_u:pad_u+H, pad_l:pad_l+W, :].contiguous()
     else:
         B = int(windows.shape[0] / (H * W / window_size / window_size))
         x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
@@ -272,18 +272,16 @@ class SwinTransformerBlock(nn.Module):
         else:
             shifted_x = x
         
-        print("before: ", x_windows.shape)
+        
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
-        print("inter: ", x_windows.shape)
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
         shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
-        print("after: ", x_windows.shape)
         
         # reverse cyclic shift
         if self.shift_size > 0:
