@@ -70,6 +70,7 @@ _C.MODEL.SWIN.QKV_BIAS = True
 _C.MODEL.SWIN.QK_SCALE = None
 _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
+_C.MODEL.SWIN.MULTI_ATTN = False
 
 # Swin MLP parameters
 _C.MODEL.SWIN_MLP = CN()
@@ -82,6 +83,7 @@ _C.MODEL.SWIN_MLP.WINDOW_SIZE = 7
 _C.MODEL.SWIN_MLP.MLP_RATIO = 4.
 _C.MODEL.SWIN_MLP.APE = False
 _C.MODEL.SWIN_MLP.PATCH_NORM = True
+_C.MODEL.SWIN_MLP.MULTI_ATTN = False
 
 # -----------------------------------------------------------------------------
 # Training settings
@@ -233,6 +235,18 @@ def update_config(config, args):
             args.window_size=eval(args.window_size)
         config.MODEL.SWIN.WINDOW_SIZE = args.window_size
         config.MODEL.SWIN_MLP.WINDOW_SIZE = args.window_size
+    if args.multi_attn:
+        if type(args.multi_attn) == str:
+            if args.multi_attn.strip().lower() == "true":
+                config.MODEL.SWIN.MULTI_ATTN = True
+                config.MODEL.SWIN_MLP.MULTI_ATTN = True
+            elif args.multi_attn.strip().lower() == "false":
+                config.MODEL.SWIN.MULTI_ATTN = False
+                config.MODEL.SWIN_MLP.MULTI_ATTN = False
+        elif type(args.multi_attn) == bool:
+            config.MODEL.SWIN.MULTI_ATTN = args.multi_attn
+            config.MODEL.SWIN_MLP.MULTI_ATTN = args.multi_attn
+            
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank
 
