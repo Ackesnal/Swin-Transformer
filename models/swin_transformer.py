@@ -295,7 +295,7 @@ class SwinTransformerBlock(nn.Module):
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
         # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, mask=self.attn_mask) + x_windows  # nW*B, window_size*window_size, C
+        attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
         if self.channel_attn:
             attn_windows = self.chan_attn(attn_windows) + attn_windows
             
@@ -452,7 +452,7 @@ class BasicLayer(nn.Module):
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                                          drop=drop, attn_drop=attn_drop,
                                          drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                         norm_layer=norm_layer, channel_attn = True)
+                                         norm_layer=norm_layer, channel_attn = False)
                                          for i in range(depth)])
         elif type(window_size) == list:
             cur_window_sizes = []
@@ -471,7 +471,7 @@ class BasicLayer(nn.Module):
                                                         qkv_bias=qkv_bias, qk_scale=qk_scale,
                                                         drop=drop, attn_drop=attn_drop,
                                                         drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                                        norm_layer=norm_layer, channel_attn = True))
+                                                        norm_layer=norm_layer, channel_attn = False))
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
