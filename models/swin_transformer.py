@@ -211,7 +211,7 @@ class WindowAttention(nn.Module):
         elif self.mode == 2:
             # 计算和周边的attention
             B, H, W, C = x.shape
-            unfold_1 = nn.Unfold(3*self.window_size, padding = window_size, stride=self.window_size)
+            unfold_1 = nn.Unfold(3*self.window_size, padding = self.window_size, stride=self.window_size)
             x = unfold_1(x.permute(0,3,1,2)).reshape(B, C, 3*self.window_size, 3*self.window_size, -1)
             x = x.permute(0,4,1,2,3).contiguous().view(-1, C, 3*self.window_size, 3*self.window_size)
             
@@ -424,8 +424,6 @@ class SwinTransformerBlock(nn.Module):
     
             # W-MSA/SW-MSA
             attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
-            if self.channel_attn:
-                attn_windows = self.chan_attn(attn_windows) + attn_windows
                 
             # merge windows
             attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
