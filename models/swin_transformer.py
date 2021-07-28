@@ -244,7 +244,7 @@ class WindowAttention(nn.Module):
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
             x = self.proj(x)
             x = self.proj_drop(x)
-            x = x[:, N//2, :].squeeze().reshape(B_, C, self.window_size*self.window_size).permute(0,2,1)
+            x = x[:, N//2, :].squeeze().reshape(B_, C//(self.window_size*self.window_size), self.window_size*self.window_size).permute(0,2,1)
             
             return x
         
