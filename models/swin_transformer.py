@@ -32,7 +32,7 @@ class Mlp(nn.Module):
         return x
 
 
-def window_partition(x, window_size, sliding = False):
+def window_partition(x, window_size):
     """
     Args:
         x: (B, H, W, C)
@@ -42,21 +42,17 @@ def window_partition(x, window_size, sliding = False):
         windows: (num_windows*B, window_size, window_size, C)
     """
     
-    if sliding:
-        B, H, W, C = x.shape
-        
-    else:
-        B, H, W, C = x.shape
-        if H % window_size != 0 or W % window_size != 0:
-            pad_u = (window_size - H % window_size) // 2
-            pad_d = (window_size - H % window_size) - pad_u
-            pad_l = (window_size - W % window_size) // 2
-            pad_r = (window_size - W % window_size) - pad_l
-            x = F.pad(x.permute(0,3,1,2), (pad_l, pad_r, pad_u, pad_d), "constant", 0).permute(0,2,3,1).contiguous()
+    B, H, W, C = x.shape
+    if H % window_size != 0 or W % window_size != 0:
+        pad_u = (window_size - H % window_size) // 2
+        pad_d = (window_size - H % window_size) - pad_u
+        pad_l = (window_size - W % window_size) // 2
+        pad_r = (window_size - W % window_size) - pad_l
+        x = F.pad(x.permute(0,3,1,2), (pad_l, pad_r, pad_u, pad_d), "constant", 0).permute(0,2,3,1).contiguous()
             
-        B, H, W, C = x.shape
-        x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-        windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+    B, H, W, C = x.shape
+    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
+    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     return windows
 
 
@@ -202,7 +198,7 @@ class WindowAttention(nn.Module):
             
             attn = self.attn_drop(attn)
         
-            x = (attn @ v).transpose(1, 2).reshape(B_, C, N)
+            x = (attn @ v).reshape(B_, C, N)
             x = self.proj(x)
             x = self.proj_drop(x)
             x = x.permute(0, 2, 1)
@@ -345,12 +341,12 @@ class SwinTransformerBlock(nn.Module):
             # 3 种 multi-channel attention 的 swin transformer
             
             # 3种类型的attention的head数量
-            token_attn_heads = num_heads // 3
-            chanl_attn_heads = num_heads // 3
-            neibr_attn_heads = num_heads // 3
+            token_attn_heads = num_heads // 2
+            chanl_attn_heads = num_heads // 2
+            """neibr_attn_heads = num_heads // 3"""
             
             # 3种类型的attention
-            token_dim = dim // 3
+            token_dim = dim // 2
             self.token_attn = WindowAttention(token_dim, window_size=self.window_size, max_window_size = input_resolution[0], 
                                               num_heads=token_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
                                               attn_drop=attn_drop, proj_drop=drop, mode = 0)
@@ -358,10 +354,10 @@ class SwinTransformerBlock(nn.Module):
             self.chanl_attn = WindowAttention(chanl_dim, window_size=self.window_size, max_window_size = input_resolution[0],
                                               num_heads=chanl_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
                                               attn_drop=attn_drop, proj_drop=drop, mode = 1)
-            neibr_dim = dim // 3 * window_size * window_size                                 
+            """neibr_dim = dim // 3 * window_size * window_size                                 
             self.neibr_attn = WindowAttention(neibr_dim, window_size=self.window_size, max_window_size = input_resolution[0],
                                               num_heads=neibr_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
-                                              attn_drop=attn_drop, proj_drop=drop, mode = 2)
+                                              attn_drop=attn_drop, proj_drop=drop, mode = 2)"""
 
 
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -462,19 +458,22 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # attention split
-            token_windows = x_windows[:, :, :C//3]
+            """token_windows = x_windows[:, :, :C//3]
             chanl_windows = x_windows[:, :, C//3:C//3*2]
-            neibr_windows = x_windows[:, :, C//3*2:]
+            neibr_windows = x_windows[:, :, C//3*2:]"""
+            token_windows = x_windows[:, :, :C//2]
+            chanl_windows = x_windows[:, :, C//2:]
             
             # W-MSA/SW-MSA
             token_windows = self.token_attn(token_windows, mask=self.token_mask) # token attention layer # nW*B, window_size*window_size, C/3
             chanl_windows = self.chanl_attn(chanl_windows) # chanl attention layer # nW*B, window_size*window_size, C/3
-            neibr_windows = window_reverse(neibr_windows, self.window_size, H, W)
+            """neibr_windows = window_reverse(neibr_windows, self.window_size, H, W)
             # print(neibr_windows.shape)
-            neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3
+            neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3"""
                 
             # merge windows
-            x_windows = torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)
+            """x_windows = torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)"""
+            x_windows = torch.cat((token_windows, chanl_windows), dim = 2)
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             shifted_x = window_reverse(x_windows, self.window_size, H, W)  # B H' W' C
             
@@ -534,7 +533,7 @@ class SwinTransformerBlock(nn.Module):
         if self.multi_attn:
             flops += nW * self.token_attn.flops(self.window_size * self.window_size)
             flops += nW * self.chanl_attn.flops(self.window_size * self.window_size)
-            flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)
+            """flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)"""
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
         # mlp
