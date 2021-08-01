@@ -108,30 +108,38 @@ class WindowAttention(nn.Module):
         self.mode = mode
         self.scale = qk_scale or (dim // num_heads) ** -0.5
 
+        if not self.mode == 3:
+            # define a parameter table of relative position bias
+            self.relative_position_bias_table = nn.Parameter(
+                torch.zeros((2 * max_window_size - 1) * (2 * max_window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
         
-        # define a parameter table of relative position bias
-        self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * max_window_size - 1) * (2 * max_window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
-    
-        # get pair-wise relative position index for each token inside the window
-        coords_h = torch.arange(max_window_size)
-        coords_w = torch.arange(max_window_size)
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
-        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += max_window_size - 1  # shift to start from 0
-        relative_coords[:, :, 1] += max_window_size - 1
-        relative_coords[:, :, 0] *= 2 * max_window_size - 1
-        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        self.register_buffer("relative_position_index", relative_position_index)
-        trunc_normal_(self.relative_position_bias_table, std=.02)
+            # get pair-wise relative position index for each token inside the window
+            coords_h = torch.arange(max_window_size)
+            coords_w = torch.arange(max_window_size)
+            coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+            coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+            relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+            relative_coords[:, :, 0] += max_window_size - 1  # shift to start from 0
+            relative_coords[:, :, 1] += max_window_size - 1
+            relative_coords[:, :, 0] *= 2 * max_window_size - 1
+            relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+            self.register_buffer("relative_position_index", relative_position_index)
+            trunc_normal_(self.relative_position_bias_table, std=.02)
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-        self.softmax = nn.Softmax(dim=-1)
+        if self.mode == 0:
+            self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+            self.attn_drop = nn.Dropout(attn_drop)
+            self.proj = nn.Linear(dim, dim)
+            self.proj_drop = nn.Dropout(proj_drop)
+            self.softmax = nn.Softmax(dim=-1)
+        elif self.mode == 1 or self.mode == 2:
+            self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+            self.attn_drop = nn.Dropout(attn_drop)
+            self.softmax = nn.Softmax(dim=-1)
+        elif self.mode == 3:
+            self.proj = nn.Linear(dim, dim)
+            self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, mask=None):
         """
@@ -140,7 +148,7 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         if self.mode == 0 :
-            # token attention, 正常的 swin transformer
+            # 正常的 swin transformer
             B_, N, C = x.shape
             qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
             q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
@@ -153,7 +161,7 @@ class WindowAttention(nn.Module):
             relative_position_bias = relative_position_bias[:self.window_size**2, :self.window_size**2,:]
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
-        
+            
             if mask is not None:
                 nW = mask.shape[0]
                 attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
@@ -169,7 +177,28 @@ class WindowAttention(nn.Module):
             x = self.proj_drop(x)
             return x
         
-        elif self.mode == 1:
+        elif self.mode == 1 :
+            # token attention
+            B_, N, C = x.shape
+            qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+            
+            q = q * self.scale
+            attn = (q @ k.transpose(-2, -1))
+        
+            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+                    self.max_window_size ** 2, self.max_window_size **2, -1)  # Wh*Ww,Wh*Ww,nH
+            relative_position_bias = relative_position_bias[:self.window_size**2, :self.window_size**2,:]
+            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+            attn = attn + relative_position_bias.unsqueeze(0)
+            
+            attn = self.softmax(attn)
+            attn = self.attn_drop(attn)
+        
+            x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+            return x
+        
+        elif self.mode == 2:
             # channel attention
             B_, N, C = x.shape
             x = x.permute(0, 2, 1)
@@ -185,63 +214,15 @@ class WindowAttention(nn.Module):
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
             
-            """
-            if mask is not None:
-                nW = mask.shape[0]
-                attn = attn.view(B_ // nW, nW, self.num_heads, C // self.num_heads, C // self.num_heads) + mask.unsqueeze(1).unsqueeze(0)
-                attn = attn.view(-1, self.num_heads, C // self.num_heads, C // self.num_heads)
-                attn = self.softmax(attn)
-            else:
-                attn = self.softmax(attn)
-            """
             attn = self.softmax(attn)
-            
             attn = self.attn_drop(attn)
         
-            x = (attn @ v).reshape(B_, C, N)
-            x = self.proj(x)
-            x = self.proj_drop(x)
-            x = x.permute(0, 2, 1)
+            x = (attn @ v).reshape(B_, C, N).permute(0, 2, 1)
             return x
             
-        elif self.mode == 2:
-            # 计算和周边的attention
-            B, H, W, C = x.shape
-            unfold_1 = nn.Unfold(3*self.window_size, padding = self.window_size, stride=self.window_size)
-            x = unfold_1(x.permute(0,3,1,2)).reshape(B, C, 3*self.window_size, 3*self.window_size, -1)
-            x = x.permute(0,4,1,2,3).contiguous().view(-1, C, 3*self.window_size, 3*self.window_size)
-            
-            unfold_2 = nn.Unfold(self.window_size, stride=self.window_size)
-            x = unfold_2(x).permute(0,2,1)
-            
-            B_, N, C = x.shape
-            qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-            q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-            
-            q = q * self.scale
-            attn = (q @ k.transpose(-2, -1))
-        
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-                    self.max_window_size ** 2, self.max_window_size **2, -1)  # Wh*Ww,Wh*Ww,nH
-            relative_position_bias = relative_position_bias[:9, :9,:]
-            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-            attn = attn + relative_position_bias.unsqueeze(0)
-        
-            if mask is not None:
-                nW = mask.shape[0]
-                attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-                attn = attn.view(-1, self.num_heads, N, N)
-                attn = self.softmax(attn)
-            else:
-                attn = self.softmax(attn)
-            
-            attn = self.attn_drop(attn)
-        
-            x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        elif self.mode == 3:
             x = self.proj(x)
             x = self.proj_drop(x)
-            x = x[:, N//2, :].squeeze().reshape(B_, C//(self.window_size*self.window_size), self.window_size*self.window_size).permute(0,2,1)
-            
             return x
         
     def change_window_size(self, window_size):
@@ -330,7 +311,7 @@ class SwinTransformerBlock(nn.Module):
                 mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
                 mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
                 attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
             else:
                 attn_mask = None
     
@@ -341,61 +322,31 @@ class SwinTransformerBlock(nn.Module):
             # 3 种 multi-channel attention 的 swin transformer
             
             # 3种类型的attention的head数量
-            token_attn_heads = num_heads // 2
-            chanl_attn_heads = num_heads // 2
-            """neibr_attn_heads = num_heads // 3"""
+            token_attn_heads = num_heads // 3
+            chanl_attn_heads = num_heads // 3
+            neibr_attn_heads = num_heads // 3
             
             # 3种类型的attention
-            token_dim = dim // 2
+            token_dim = dim // 3
             self.token_attn = WindowAttention(token_dim, window_size=self.window_size, max_window_size = input_resolution[0], 
                                               num_heads=token_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
-                                              attn_drop=attn_drop, proj_drop=drop, mode = 0)
+                                              attn_drop=attn_drop, proj_drop=drop, mode = 1)
             chanl_dim = self.window_size ** 2
             self.chanl_attn = WindowAttention(chanl_dim, window_size=self.window_size, max_window_size = input_resolution[0],
                                               num_heads=chanl_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
-                                              attn_drop=attn_drop, proj_drop=drop, mode = 1)
-            """neibr_dim = dim // 3 * window_size * window_size                                 
+                                              attn_drop=attn_drop, proj_drop=drop, mode = 2)
+            neibr_dim = dim // 3
             self.neibr_attn = WindowAttention(neibr_dim, window_size=self.window_size, max_window_size = input_resolution[0],
                                               num_heads=neibr_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
-                                              attn_drop=attn_drop, proj_drop=drop, mode = 2)"""
+                                              attn_drop=attn_drop, proj_drop=drop, mode = 3)
 
 
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.norm2 = norm_layer(dim)
             mlp_hidden_dim = int(dim * mlp_ratio)
             self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-    
-            if self.shift_size > 0:
-                # calculate attention mask for SW-MSA
-                H, W = self.input_resolution
-                img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
-                h_slices = (slice(0, -self.window_size),
-                            slice(-self.window_size, -self.shift_size),
-                            slice(-self.shift_size, None))
-                w_slices = (slice(0, -self.window_size),
-                            slice(-self.window_size, -self.shift_size),
-                            slice(-self.shift_size, None))
-                cnt = 0
-                for h in h_slices:
-                    for w in w_slices:
-                        img_mask[:, h, w, :] = cnt
-                        cnt += 1
-    
-                mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
-                mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
-                token_mask = attn_mask.clone().detach()
-                chanl_mask = attn_mask.clone().detach()
-                neibr_mask = attn_mask.clone().detach()
-            else:
-                token_mask = None
-                chanl_mask = None
-                neibr_mask = None
-                
-            self.register_buffer("token_mask", token_mask)
-            self.register_buffer("chanl_mask", chanl_mask)
-            self.register_buffer("neibr_mask", neibr_mask)
+            self.proj = nn.Linear(dim, dim)
+            self.proj_drop = nn.Dropout(drop)
 
 
     def forward(self, x):
@@ -449,7 +400,9 @@ class SwinTransformerBlock(nn.Module):
     
             # cyclic shift
             if self.shift_size > 0:
-                shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+                shifted_x = F.pad(x.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
+                                      self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
+                # shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
             else:
                 shifted_x = x
             
@@ -458,31 +411,32 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # attention split
-            """token_windows = x_windows[:, :, :C//3]
+            token_windows = x_windows[:, :, :C//3]
             chanl_windows = x_windows[:, :, C//3:C//3*2]
-            neibr_windows = x_windows[:, :, C//3*2:]"""
-            token_windows = x_windows[:, :, :C//2]
-            chanl_windows = x_windows[:, :, C//2:]
+            neibr_windows = x_windows[:, :, C//3*2:]
             
             # W-MSA/SW-MSA
-            token_windows = self.token_attn(token_windows, mask=self.token_mask) # token attention layer # nW*B, window_size*window_size, C/3
+            token_windows = self.token_attn(token_windows) # token attention layer # nW*B, window_size*window_size, C/3
             chanl_windows = self.chanl_attn(chanl_windows) # chanl attention layer # nW*B, window_size*window_size, C/3
-            """neibr_windows = window_reverse(neibr_windows, self.window_size, H, W)
-            # print(neibr_windows.shape)
             neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3"""
                 
             # merge windows
-            """x_windows = torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)"""
-            x_windows = torch.cat((token_windows, chanl_windows), dim = 2)
+            x_windows = torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)
+            x_windows = self.proj_drop(self.proj(x_windows))
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
-            shifted_x = window_reverse(x_windows, self.window_size, H, W)  # B H' W' C
+            
+            if self.shift_size > 0:
+                shifted_x = window_reverse(x_windows, self.window_size, H+self.window_size, W+self.window_size)  # B H' W' C
+            else:
+                shifted_x = window_reverse(x_windows, self.window_size, H, W)
             
             # reverse cyclic shift
             if self.shift_size > 0:
-                shifted_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+                shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :]
+                # shifted_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
             else:
                 shifted_x = shifted_x
-            shifted_x = shifted_x.view(B, H * W, C)
+            shifted_x = shifted_x.reshape(B, H * W, C)
     
             # FFN
             x = shortcut + self.drop_path(shifted_x)
