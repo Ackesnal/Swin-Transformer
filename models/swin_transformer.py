@@ -421,8 +421,7 @@ class SwinTransformerBlock(nn.Module):
             neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3"""
                 
             # merge windows
-            x_windows = torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)
-            x_windows = self.proj_drop(self.proj(x_windows))
+            x_windows = x_windows + self.proj_drop(self.proj(torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)))
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             
             if self.shift_size > 0:
