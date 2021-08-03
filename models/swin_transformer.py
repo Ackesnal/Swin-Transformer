@@ -185,14 +185,21 @@ class WindowAttention(nn.Module):
             
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
-        
+            
             relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
                     self.max_window_size ** 2, self.max_window_size **2, -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias[:self.window_size**2, :self.window_size**2,:]
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
             
-            attn = self.softmax(attn)
+            if mask is not None:
+                nW = mask.shape[0]
+                attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+                attn = attn.view(-1, self.num_heads, N, N)
+                attn = self.softmax(attn)
+            else:
+                attn = self.softmax(attn)
+                
             attn = self.attn_drop(attn)
         
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
@@ -347,6 +354,21 @@ class SwinTransformerBlock(nn.Module):
             self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(drop)
+            
+            if self.shift_size > 0:
+                # calculate attention mask for SW-MSA
+                H, W = self.input_resolution
+                img_mask = torch.ones((1, H, W, 1))  # 1 H W 1
+                img_mask = F.pad(img_mask.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
+                                      self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)                
+                mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+                mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
+            else:
+                attn_mask = None
+    
+            self.register_buffer("attn_mask", attn_mask)
 
 
     def forward(self, x):
@@ -416,7 +438,7 @@ class SwinTransformerBlock(nn.Module):
             neibr_windows = x_windows[:, :, C//3*2:]
             
             # W-MSA/SW-MSA
-            token_windows = self.token_attn(token_windows) # token attention layer # nW*B, window_size*window_size, C/3
+            token_windows = self.token_attn(token_windows, mask=self.attn_mask) # token attention layer # nW*B, window_size*window_size, C/3
             chanl_windows = self.chanl_attn(chanl_windows) # chanl attention layer # nW*B, window_size*window_size, C/3
             neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3"""
                 
