@@ -443,7 +443,7 @@ class SwinTransformerBlock(nn.Module):
             neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3"""
                 
             # merge windows
-            x_windows = x_windows + self.proj_drop(self.proj(torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)))
+            x_windows = self.proj_drop(self.proj(torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)))
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             
             if self.shift_size > 0:
@@ -527,34 +527,51 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, multi_attn):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(4 * dim)
-
-    def forward(self, x):
+        
+        elif multi_attn:
+            self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+            self.norm = norm_layer(4 * dim)
+        
+        if multi_attn:
+            self.proj = nn.Conv2d(dim, 2*dim, kernel_size=2, stride=2)
+            self.norm = norm_layer(2*dim)
+            
+    def forward(self, x, multi_attn = False):
         """
         x: B, H*W, C
         """
-        H, W = self.input_resolution
-        B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-
-        x = x.view(B, H, W, C)
-
-        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
-        x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
-        x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
-        x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
-        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
-
-        x = self.norm(x)
-        x = self.reduction(x)
-
+        
+        if not multi_attn:
+            H, W = self.input_resolution
+            B, L, C = x.shape
+            assert L == H * W, "input feature has wrong size"
+            assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+    
+            x = x.view(B, H, W, C)
+    
+            x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
+            x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
+            x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
+            x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
+            x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
+            x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+    
+            x = self.norm(x)
+            x = self.reduction(x)
+        
+        elif multi_attn:
+            H, W = self.input_resolution
+            B, L, C = x.shape
+            assert L == H * W, "input feature has wrong size"
+            assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+            
+            x = x.view(B, H, W, C)
+            x = self.norm(self.proj(x))
+            
         return x
 
     def extra_repr(self) -> str:
@@ -596,6 +613,7 @@ class BasicLayer(nn.Module):
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
+        self.multi_attn = multi_attn
 
         # build blocks
         if type(window_size) == int:
@@ -628,7 +646,7 @@ class BasicLayer(nn.Module):
                                                         norm_layer=norm_layer, multi_attn = multi_attn))
         # patch merging layer
         if downsample is not None:
-            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer, multi_attn)
         else:
             self.downsample = None
 
@@ -639,7 +657,7 @@ class BasicLayer(nn.Module):
             else:
                 x = blk(x)
         if self.downsample is not None:
-            x = self.downsample(x)
+            x = self.downsample(x, self.multi_attn)
         return x
     
     def change_window_size(self, window_size):
@@ -756,6 +774,7 @@ class SwinTransformer(nn.Module):
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
         self.window_size = window_size
+        self.multi_attn = multi_attn
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
