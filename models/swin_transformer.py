@@ -527,16 +527,16 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, multi_attn):
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, multi_attn=False):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
         
-        elif multi_attn:
+        if not multi_attn:
             self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
             self.norm = norm_layer(4 * dim)
         
-        if multi_attn:
+        elif multi_attn:
             self.proj = nn.Conv2d(dim, 2*dim, kernel_size=2, stride=2)
             self.norm = norm_layer(2*dim)
             
@@ -569,8 +569,8 @@ class PatchMerging(nn.Module):
             assert L == H * W, "input feature has wrong size"
             assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
             
-            x = x.view(B, H, W, C)
-            x = self.norm(self.proj(x))
+            x = x.view(B, H, W, C).permute(0,3,1,2)
+            x = self.norm(self.proj(x).permute(0,2,3,1)).reshape(B, -1, 2*C)
             
         return x
 
@@ -646,7 +646,7 @@ class BasicLayer(nn.Module):
                                                         norm_layer=norm_layer, multi_attn = multi_attn))
         # patch merging layer
         if downsample is not None:
-            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer, multi_attn)
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer, multi_attn = multi_attn)
         else:
             self.downsample = None
 
