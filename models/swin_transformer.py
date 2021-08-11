@@ -208,8 +208,7 @@ class WindowAttention(nn.Module):
         elif self.mode == 2:
             # channel attention
             B_, N, C = x.shape
-            x = x.permute(0, 2, 1)
-            qkv = self.qkv(x).reshape(B_, self.num_heads, C // self.num_heads, 3, N).permute(3, 0, 1, 2, 4)
+            qkv = self.qkv(x).permute(0, 2, 1).reshape(B_, 3, self.num_heads, C // self.num_heads, N).permute(1, 0, 2, 3, 4)
             q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
             
             q = q * self.scale
@@ -338,7 +337,7 @@ class SwinTransformerBlock(nn.Module):
             self.token_attn = WindowAttention(token_dim, window_size=self.window_size, max_window_size = input_resolution[0], 
                                               num_heads=token_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
                                               attn_drop=attn_drop, proj_drop=drop, mode = 1)
-            chanl_dim = self.window_size ** 2
+            chanl_dim = dim // 3
             self.chanl_attn = WindowAttention(chanl_dim, window_size=self.window_size, max_window_size = input_resolution[0],
                                               num_heads=chanl_attn_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, 
                                               attn_drop=attn_drop, proj_drop=drop, mode = 2)
@@ -353,8 +352,9 @@ class SwinTransformerBlock(nn.Module):
             mlp_hidden_dim = int(dim * mlp_ratio)
             self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
             self.proj = nn.Linear(dim, dim)
-            self.proj_drop = nn.Dropout(drop)
+            self.cat_norm = norm_layer(dim)
             
+            """
             if self.shift_size > 0:
                 # calculate attention mask for SW-MSA
                 H, W = self.input_resolution
@@ -369,7 +369,7 @@ class SwinTransformerBlock(nn.Module):
                 attn_mask = None
     
             self.register_buffer("attn_mask", attn_mask)
-
+            """
 
     def forward(self, x):
         if not self.multi_attn:
@@ -438,12 +438,12 @@ class SwinTransformerBlock(nn.Module):
             neibr_windows = x_windows[:, :, C//3*2:]
             
             # W-MSA/SW-MSA
-            token_windows = self.token_attn(token_windows, mask=self.attn_mask) # token attention layer # nW*B, window_size*window_size, C/3
+            token_windows = self.token_attn(token_windows) # token attention layer # nW*B, window_size*window_size, C/3
             chanl_windows = self.chanl_attn(chanl_windows) # chanl attention layer # nW*B, window_size*window_size, C/3
             neibr_windows = self.neibr_attn(neibr_windows) # chanl attention layer # nW*B, window_size*window_size, C/3"""
                 
             # merge windows
-            x_windows = self.proj_drop(self.proj(torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)))
+            x_windows = self.proj(self.cat_norm(torch.cat((token_windows, chanl_windows, neibr_windows), dim = 2)))
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             
             if self.shift_size > 0:
@@ -508,7 +508,7 @@ class SwinTransformerBlock(nn.Module):
         if self.multi_attn:
             flops += nW * self.token_attn.flops(self.window_size * self.window_size)
             flops += nW * self.chanl_attn.flops(self.window_size * self.window_size)
-            """flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)"""
+            flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
         # mlp
@@ -532,7 +532,7 @@ class PatchMerging(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         
-        if not multi_attn:
+        if True: # not multi_attn:
             self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
             self.norm = norm_layer(4 * dim)
         
@@ -545,7 +545,7 @@ class PatchMerging(nn.Module):
         x: B, H*W, C
         """
         
-        if not multi_attn:
+        if True: # not multi_attn:
             H, W = self.input_resolution
             B, L, C = x.shape
             assert L == H * W, "input feature has wrong size"
