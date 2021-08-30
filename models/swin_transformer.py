@@ -107,7 +107,7 @@ class WindowAttention(nn.Module):
         self.mode = mode
         self.scale = qk_scale or (dim // num_heads) ** -0.5
         
-        if not self.mode == 3 and not self.mode = 4:
+        if self.mode == 0 or self.mode == 1:
             # define a parameter table of relative position bias
             self.relative_position_bias_table = nn.Parameter(
                 torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
@@ -125,7 +125,26 @@ class WindowAttention(nn.Module):
             relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
             self.register_buffer("relative_position_index", relative_position_index)
             trunc_normal_(self.relative_position_bias_table, std=.02)
-
+        
+        elif self.mode == 2:
+            # define a parameter table of relative position bias
+            self.relative_position_bias_table = nn.Parameter(
+                torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+        
+            # get pair-wise relative position index for each token inside the window
+            coords_h = torch.arange(window_size)
+            coords_w = torch.arange(1)
+            coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+            coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+            relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+            relative_coords[:, :, 0] += window_size - 1  # shift to start from 0
+            relative_coords[:, :, 1] += window_size - 1
+            relative_coords[:, :, 0] *= 2 * window_size - 1
+            relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+            self.register_buffer("relative_position_index", relative_position_index)
+            trunc_normal_(self.relative_position_bias_table, std=.02)
+        
         if self.mode == 0:
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.attn_drop = nn.Dropout(attn_drop)
@@ -210,7 +229,7 @@ class WindowAttention(nn.Module):
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
             
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size**2, self.window_size**2, -1)  # Wh*Ww,Wh*Ww,nH
+            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size, self.window_size, -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
             
@@ -428,7 +447,7 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # merge windows
-            x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], attn_mask),
+            x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
                                                  self.CSA(x_windows[:, :, C//4:C//2]),
                                                  self.SMLP(x_windows[:, :, C//2:3*C//4]),
                                                  self.CMLP(x_windows[:, :, 3*C//4:])), 
@@ -495,9 +514,10 @@ class SwinTransformerBlock(nn.Module):
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
-            flops += nW * self.token_attn.flops(self.window_size * self.window_size)
-            flops += nW * self.chanl_attn.flops(self.window_size * self.window_size)
-            flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)
+            pass
+            #flops += nW * self.token_attn.flops(self.window_size * self.window_size)
+            #flops += nW * self.chanl_attn.flops(self.window_size * self.window_size)
+            #flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
         # mlp
@@ -619,7 +639,7 @@ class BasicLayer(nn.Module):
                                                         norm_layer=norm_layer, multi_attn = multi_attn))
         # patch merging layer
         if downsample is not None:
-            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer, multi_attn = multi_attn)
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
         else:
             self.downsample = None
 
@@ -630,7 +650,7 @@ class BasicLayer(nn.Module):
             else:
                 x = blk(x)
         if self.downsample is not None:
-            x = self.downsample(x, self.multi_attn)
+            x = self.downsample(x)
         return x
     
     def change_window_size(self, window_size):
