@@ -83,6 +83,143 @@ def window_reverse(windows, window_size, H, W):
     return x
 
 
+class SSA(nn.Module):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
+        super().__init__()
+        self.dim = dim
+        self.window_size = window_size  # Wh, Ww
+        self.num_heads = num_heads
+        self.mode = mode
+        self.scale = qk_scale or (dim // num_heads) ** -0.5
+        
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+        
+        # get pair-wise relative position index for each token inside the window
+        coords_h = torch.arange(window_size)
+        coords_w = torch.arange(window_size)
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += window_size - 1  # shift to start from 0
+        relative_coords[:, :, 1] += window_size - 1
+        relative_coords[:, :, 0] *= 2 * window_size - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        self.relative_position_index = relative_position_index
+        trunc_normal_(self.relative_position_bias_table, std=.02)
+        
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.softmax = nn.Softmax(dim=-1)
+            
+    def forward(self, x, mask=None):
+        # spatial attention
+        B_, N, C = x.shape
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+          
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+            
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        attn = attn + relative_position_bias.unsqueeze(0)
+            
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, N, N)
+            attn = self.softmax(attn)
+        else:
+            attn = self.softmax(attn)
+                
+        attn = self.attn_drop(attn)
+        
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        return x
+
+
+class CSA(nn.Module):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
+        super().__init__()
+        self.dim = dim
+        self.window_size = window_size  # Wh, Ww
+        self.num_heads = num_heads
+        self.mode = mode
+        self.scale = qk_scale or (dim // num_heads) ** -0.5
+        
+        # define a parameter table of relative position bias
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+        
+        # get pair-wise relative position index for each token inside the window
+        coords_h = torch.arange(window_size)
+        coords_w = torch.arange(1)
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += window_size - 1  # shift to start from 0
+        relative_coords[:, :, 1] += window_size - 1
+        relative_coords[:, :, 0] *= 2 * window_size - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        self.relative_position_index = relative_position_index
+        trunc_normal_(self.relative_position_bias_table, std=.02)
+        
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.softmax = nn.Softmax(dim=-1)
+            
+    def forward(self, x, mask=None):
+        # channel attention
+        B_, N, C = x.shape
+            
+        x = x.transpose(-2, -1)
+        qkv = self.qkv(x).reshape(B_, self.num_heads, C//self.num_heads, 3, N).permute(3, 0, 1, 2, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+            
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+            
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size, self.window_size, -1)  # Wh*Ww,Wh*Ww,nH
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        attn = attn + relative_position_bias.unsqueeze(0)
+            
+        attn = self.softmax(attn)
+        attn = self.attn_drop(attn)
+        
+        x = (attn @ v).transpose(1, 2).reshape(B_, C, N).transpose(-2, -1)
+            
+        return x
+        
+
+class SMLP(nn.Module):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
+        super().__init__()
+        self.dim = dim
+        self.mlp = Mlp(in_features=dim, drop=proj_drop)
+            
+    def forward(self, x, mask=None):
+        # spatial mlp
+        x = self.mlp(x)
+        return x
+        
+        
+class CMLP(nn.Module):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
+        super().__init__()
+        self.dim = dim
+        self.mlp = Mlp(in_features=dim, drop=proj_drop)
+            
+    def forward(self, x, mask=None):
+        # channel mlp
+        x = x.transpose(-1, -2)
+        x = self.mlp(x)
+        x = x.transpose(-1, -2)
+        return x
+        
+
 class WindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
     It supports both of shifted and non-shifted window.
@@ -122,7 +259,7 @@ class WindowAttention(nn.Module):
             relative_coords[:, :, 1] += window_size - 1
             relative_coords[:, :, 0] *= 2 * window_size - 1
             relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-            self.register_buffer("relative_position_index", relative_position_index)
+            self.relative_position_index = relative_position_index
             trunc_normal_(self.relative_position_bias_table, std=.02)
         
         elif self.mode == 2:
@@ -141,7 +278,7 @@ class WindowAttention(nn.Module):
             relative_coords[:, :, 1] += window_size - 1
             relative_coords[:, :, 0] *= 2 * window_size - 1
             relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-            self.register_buffer("relative_position_index", relative_position_index)
+            self.relative_position_index = relative_position_index
             trunc_normal_(self.relative_position_bias_table, std=.02)
         
         if self.mode == 0:
@@ -172,7 +309,7 @@ class WindowAttention(nn.Module):
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
         
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size**2, self.window_size**2, -1)  # Wh*Ww,Wh*Ww,nH
+            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
             
@@ -200,7 +337,7 @@ class WindowAttention(nn.Module):
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
             
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size**2, self.window_size**2, -1)  # Wh*Ww,Wh*Ww,nH
+            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
             
@@ -289,7 +426,7 @@ class SwinTransformerBlock(nn.Module):
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
-
+    
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm, multi_attn = False):
@@ -350,17 +487,17 @@ class SwinTransformerBlock(nn.Module):
             spatial_dim = dim // 4
             channel_dim = int(self.window_size ** 2)
             
-            self.SSA = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.SSA = SSA(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                        qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
                                               
             
-            self.CSA = WindowAttention(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.CSA = CSA(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                        qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2)
             
-            self.SMLP = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.SMLP = SMLP(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
             
-            self.CMLP = WindowAttention(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
+            self.CMLP = CMLP(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
                                               
 
@@ -384,8 +521,7 @@ class SwinTransformerBlock(nn.Module):
                 attn_mask = None
     
             self.register_buffer("attn_mask", attn_mask)
-            
-
+              
     def forward(self, x):
         if not self.multi_attn:
             H, W = self.input_resolution
@@ -446,11 +582,18 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # merge windows
-            x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
+            x0 = torch.jit.fork(self.SSA, x_windows[:, :, :C//4], self.attn_mask)
+            x1 = torch.jit.fork(self.CSA, x_windows[:, :, C//4:C//2])
+            x2 = torch.jit.fork(self.SMLP, x_windows[:, :, C//2:3*C//4])
+            x3 = torch.jit.fork(self.CMLP, x_windows[:, :, 3*C//4:])
+            
+            """x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
                                                  self.CSA(x_windows[:, :, C//4:C//2]),
                                                  self.SMLP(x_windows[:, :, C//2:3*C//4]),
                                                  self.CMLP(x_windows[:, :, 3*C//4:])), 
-                                                 dim = 2))
+                                                 dim = 2))"""
+                                                 
+            x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))
                                                  
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             
