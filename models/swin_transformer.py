@@ -365,9 +365,9 @@ class SwinTransformerBlock(nn.Module):
                                               
 
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            self.norm2 = norm_layer(dim)
-            mlp_hidden_dim = int(dim * mlp_ratio)
-            self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+            #self.norm2 = norm_layer(dim)
+            #mlp_hidden_dim = int(dim * mlp_ratio)
+            #self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
             self.cat_norm = norm_layer(dim)
             
             if self.shift_size > 0:
@@ -468,7 +468,15 @@ class SwinTransformerBlock(nn.Module):
     
             # FFN
             x = shortcut + self.drop_path(shifted_x)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            x0 = x[:, :, 0::4]  # B H/2 W/2 C
+            x1 = x[:, :, 1::4]  # B H/2 W/2 C
+            x2 = x[:, :, 2::4]  # B H/2 W/2 C
+            x3 = x[:, :, 3::4]  # B H/2 W/2 C
+            x = torch.cat((x[:, :, 0::4],
+                           x[:, :, 1::4],
+                           x[:, :, 2::4],
+                           x[:, :, 3::4]), dim = 2)
+            # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
             return x
     
@@ -807,7 +815,7 @@ class SwinTransformer(nn.Module):
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-
+        self.subhead = nn.Linear(self.num_features//4, num_classes) if num_classes > 0 else nn.Identity()
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -835,7 +843,7 @@ class SwinTransformer(nn.Module):
 
         for layer in self.layers:
             x = layer(x)
-
+        
         x = self.norm(x)  # B L C
         x = self.avgpool(x.transpose(1, 2))  # B C 1
         x = torch.flatten(x, 1)
@@ -849,8 +857,12 @@ class SwinTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
+        x0 = x[:, :x.shape[1]//4]
+        x1 = x[:, x.shape[1]//4:x.shape[1]//2]
+        x2 = x[:, x.shape[1]//2:3*x.shape[1]//4]
+        x3 = x[:, 3*x.shape[1]//4:] 
         x = self.head(x)
-        return x
+        return [x, self.subhead(x0), self.subhead(x1), self.subhead(x2), self.subhead(x3)]
 
     def flops(self):
         flops = 0

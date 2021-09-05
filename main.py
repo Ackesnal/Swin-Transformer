@@ -105,6 +105,11 @@ def main(config):
         criterion = LabelSmoothingCrossEntropy(smoothing=config.MODEL.LABEL_SMOOTHING)
     else:
         criterion = torch.nn.CrossEntropyLoss()
+        
+    criteria = torch.nn.ModuleList()
+    criteria.append(criterion)
+    for _ in range(4):
+        criteria.append(torch.nn.KLDivLoss())
 
     max_accuracy = 0.0
 
@@ -139,7 +144,7 @@ def main(config):
     
         data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
+        train_one_epoch(config, model, criteria, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
 
@@ -154,7 +159,7 @@ def main(config):
     logger.info('Training time {}'.format(total_time_str))
 
 
-def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
+def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
     model.train()
     optimizer.zero_grad()
 
@@ -175,7 +180,11 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         outputs = model(samples)
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
-            loss = criterion(outputs, targets)
+            loss = criteria[0](outputs[0], targets)
+            logsoftmax = torch.nn.LogSoftmax(dim=1)
+            softmax = torch.nn.Softmax(dim=1)
+            for i in range(4):
+                loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4))
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -195,7 +204,11 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 optimizer.zero_grad()
                 lr_scheduler.step_update(epoch * num_steps + idx)
         else:
-            loss = criterion(outputs, targets)
+            loss = criteria[0](outputs[0], targets)
+            logsoftmax = torch.nn.LogSoftmax(dim=1)
+            softmax = torch.nn.Softmax(dim=1)
+            for i in range(4):
+                loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4))
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:

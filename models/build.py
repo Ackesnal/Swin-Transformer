@@ -29,6 +29,8 @@ def build_model(config):
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
                                 multi_attn=config.MODEL.SWIN.MULTI_ATTN)
+        print("模型权重参数数量：", sum(p.numel() for p in model.parameters() if p.requires_grad), "\n\n\n\n\n\n")
+        print("全模型参数数量：", sum(p.numel() for p in model.parameters()), "\n\n\n\n\n\n")
     elif model_type == 'swin_mlp':
         model = SwinMLP(img_size=config.DATA.IMG_SIZE,
                         patch_size=config.MODEL.SWIN_MLP.PATCH_SIZE,
