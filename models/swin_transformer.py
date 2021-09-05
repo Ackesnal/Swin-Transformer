@@ -487,17 +487,16 @@ class SwinTransformerBlock(nn.Module):
             spatial_dim = dim // 4
             channel_dim = int(self.window_size ** 2)
             
-            self.SSA = SSA(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.SSA = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                        qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
                                               
-            
-            self.CSA = CSA(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.CSA = WindowAttention(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                        qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2)
             
-            self.SMLP = SMLP(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.SMLP = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
             
-            self.CMLP = CMLP(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
+            self.CMLP = WindowAttention(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
                                               
 
@@ -582,18 +581,17 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # merge windows
-            x0 = torch.jit.fork(self.SSA, x_windows[:, :, :C//4], self.attn_mask)
+            """x0 = torch.jit.fork(self.SSA, x_windows[:, :, :C//4], self.attn_mask)
             x1 = torch.jit.fork(self.CSA, x_windows[:, :, C//4:C//2])
             x2 = torch.jit.fork(self.SMLP, x_windows[:, :, C//2:3*C//4])
             x3 = torch.jit.fork(self.CMLP, x_windows[:, :, 3*C//4:])
+            x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))"""
             
-            """x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
+            x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
                                                  self.CSA(x_windows[:, :, C//4:C//2]),
                                                  self.SMLP(x_windows[:, :, C//2:3*C//4]),
                                                  self.CMLP(x_windows[:, :, 3*C//4:])), 
-                                                 dim = 2))"""
-                                                 
-            x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))
+                                                 dim = 2))
                                                  
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             
