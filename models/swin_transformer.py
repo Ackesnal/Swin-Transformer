@@ -588,11 +588,11 @@ class SwinTransformerBlock(nn.Module):
             x3 = torch.jit.fork(self.CMLP, x_windows[:, :, 3*C//4:])
             x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))
             """
-            x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
+            x_windows = torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
                                                  self.CSA(x_windows[:, :, C//4:C//2]),
                                                  self.SMLP(x_windows[:, :, C//2:3*C//4]),
                                                  self.CMLP(x_windows[:, :, 3*C//4:])), 
-                                                 dim = 2))
+                                                 dim = 2)
                                                  
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
             
