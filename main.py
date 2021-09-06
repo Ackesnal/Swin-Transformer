@@ -181,10 +181,10 @@ def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixu
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             loss = criteria[0](outputs[0], targets)
-            logsoftmax = torch.nn.LogSoftmax(dim=1)
+            """logsoftmax = torch.nn.LogSoftmax(dim=1)
             softmax = torch.nn.Softmax(dim=1)
             for i in range(4):
-                loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4)) * 0.25
+                loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4)) * 0.25"""
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -205,10 +205,10 @@ def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixu
                 lr_scheduler.step_update(epoch * num_steps + idx)
         else:
             loss = criteria[0](outputs[0], targets)
-            logsoftmax = torch.nn.LogSoftmax(dim=1)
+            """logsoftmax = torch.nn.LogSoftmax(dim=1)
             softmax = torch.nn.Softmax(dim=1)
             for i in range(4):
-                loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4)) * 0.25
+                loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4)) * 0.25"""
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:

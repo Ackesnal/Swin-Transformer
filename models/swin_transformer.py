@@ -171,7 +171,7 @@ class CSA(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.softmax = nn.Softmax(dim=-1)
             
-    def forward(self, x, mask=None):
+    def forward(self, x):
         # channel attention
         B_, N, C = x.shape
             
@@ -200,7 +200,7 @@ class SMLP(nn.Module):
         self.dim = dim
         self.mlp = Mlp(in_features=dim, drop=proj_drop)
             
-    def forward(self, x, mask=None):
+    def forward(self, x):
         # spatial mlp
         x = self.mlp(x)
         return x
@@ -212,7 +212,7 @@ class CMLP(nn.Module):
         self.dim = dim
         self.mlp = Mlp(in_features=dim, drop=proj_drop)
             
-    def forward(self, x, mask=None):
+    def forward(self, x):
         # channel mlp
         x = x.transpose(-1, -2)
         x = self.mlp(x)
@@ -233,7 +233,7 @@ class WindowAttention(nn.Module):
         attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
-
+    
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
 
         super().__init__()
@@ -505,6 +505,7 @@ class SwinTransformerBlock(nn.Module):
             #mlp_hidden_dim = int(dim * mlp_ratio)
             #self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
             self.cat_norm = norm_layer(dim)
+            self.activate = nn.GELU()
             
             if self.shift_size > 0:
                 # calculate attention mask for SSA
@@ -585,8 +586,8 @@ class SwinTransformerBlock(nn.Module):
             x1 = torch.jit.fork(self.CSA, x_windows[:, :, C//4:C//2])
             x2 = torch.jit.fork(self.SMLP, x_windows[:, :, C//2:3*C//4])
             x3 = torch.jit.fork(self.CMLP, x_windows[:, :, 3*C//4:])
-            x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))"""
-            
+            x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))
+            """
             x_windows = self.cat_norm(torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
                                                  self.CSA(x_windows[:, :, C//4:C//2]),
                                                  self.SMLP(x_windows[:, :, C//2:3*C//4]),
@@ -608,15 +609,13 @@ class SwinTransformerBlock(nn.Module):
             shifted_x = shifted_x.reshape(B, H * W, C)
     
             # FFN
-            x = shortcut + self.drop_path(shifted_x)
-            x0 = x[:, :, 0::4]  # B H/2 W/2 C
-            x1 = x[:, :, 1::4]  # B H/2 W/2 C
-            x2 = x[:, :, 2::4]  # B H/2 W/2 C
-            x3 = x[:, :, 3::4]  # B H/2 W/2 C
-            x = torch.cat((x[:, :, 0::4],
-                           x[:, :, 1::4],
-                           x[:, :, 2::4],
-                           x[:, :, 3::4]), dim = 2)
+            shifted_x = torch.cat((shifted_x[:, :, 0::4],
+                                   shifted_x[:, :, 1::4],
+                                   shifted_x[:, :, 2::4],
+                                   shifted_x[:, :, 3::4]), dim = 2)
+                                   
+            x = shortcut + self.drop_path(self.activate(self.cat_norm(shifted_x)))
+            
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
             return x
@@ -956,7 +955,8 @@ class SwinTransformer(nn.Module):
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        self.subhead = nn.Linear(self.num_features//4, num_classes) if num_classes > 0 else nn.Identity()
+        #self.subhead = nn.Linear(self.num_features//4, num_classes) if num_classes > 0 else nn.Identity()
+        self.activate = nn.GELU()
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -998,12 +998,12 @@ class SwinTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-        x0 = x[:, :x.shape[1]//4]
+        """x0 = x[:, :x.shape[1]//4]
         x1 = x[:, x.shape[1]//4:x.shape[1]//2]
         x2 = x[:, x.shape[1]//2:3*x.shape[1]//4]
-        x3 = x[:, 3*x.shape[1]//4:] 
-        x = self.head(x)
-        return [x, self.subhead(x0), self.subhead(x1), self.subhead(x2), self.subhead(x3)]
+        x3 = x[:, 3*x.shape[1]//4:] """
+        x = self.head(self.activate(x))
+        return [x]#, self.subhead(x0), self.subhead(x1), self.subhead(x2), self.subhead(x3)]
 
     def flops(self):
         flops = 0
