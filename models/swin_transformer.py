@@ -260,14 +260,26 @@ class WindowAttention(nn.Module):
     def flops(self, N):
         # calculate flops for 1 window with token length of N
         flops = 0
-        # qkv = self.qkv(x)
-        flops += N * self.dim * 3 * self.dim
-        # attn = (q @ k.transpose(-2, -1))
-        flops += self.num_heads * N * (self.dim // self.num_heads) * N
-        #  x = (attn @ v)
-        flops += self.num_heads * N * N * (self.dim // self.num_heads)
-        # x = self.proj(x)
-        flops += N * self.dim * self.dim
+        
+        if self.mode == 0:
+            # qkv = self.qkv(x)
+            flops += N * self.dim * 3 * self.dim
+            # attn = (q @ k.transpose(-2, -1))
+            flops += self.num_heads * N * (self.dim // self.num_heads) * N
+            #  x = (attn @ v)
+            flops += self.num_heads * N * N * (self.dim // self.num_heads)
+            # x = self.proj(x)
+            flops += N * self.dim * self.dim
+        elif self.mode == 1 or self.mode == 2:
+            # qkv = self.qkv(x)
+            flops += N * self.dim * 3 * self.dim
+            # attn = (q @ k.transpose(-2, -1))
+            flops += self.num_heads * N * (self.dim // self.num_heads) * N
+            #  x = (attn @ v)
+            flops += self.num_heads * N * N * (self.dim // self.num_heads)
+        elif self.mode == 3 or self.mode == 4:
+            flops += N * self.dim * self.dim * 2
+            
         return flops
 
 
@@ -364,11 +376,9 @@ class SwinTransformerBlock(nn.Module):
                                               
 
             self.drop_path_1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            self.cat_norm_1 = norm_layer(dim)
-            self.activate_1 = nn.GELU()
             self.drop_path_2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            self.cat_norm_2 = norm_layer(dim)
-            self.activate_2 = nn.GELU()
+            self.activate = nn.GELU()
+            self.norm2 = norm_layer(dim)
             self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
             if self.shift_size > 0:
@@ -450,7 +460,7 @@ class SwinTransformerBlock(nn.Module):
             x_csa = self.CSA(x_windows[:, :, C//4:C//2])
             x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
             x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-            x_windows = x_windows + self.drop_path_1(self.activate_1(self.cat_norm_1(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))))
+            x_windows = torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
                                                  
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
@@ -464,10 +474,8 @@ class SwinTransformerBlock(nn.Module):
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
 
             # Point-wise Conv
-            shifted_x = shifted_x.reshape(B, H * W, C)
-            shifted_x = self.proj(shifted_x.permute(0, 2, 1)).permute(0, 2, 1)
-            
-            x = shortcut + self.drop_path_2(self.activate_2(self.cat_norm_2(shifted_x)))
+            x = shortcut + self.drop_path_1(shifted_x.reshape(B, H * W, C))
+            x = x + self.drop_path_2(self.activate(self.proj(self.norm2(x).permute(0, 2, 1)).permute(0, 2, 1)))
             
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
@@ -514,14 +522,17 @@ class SwinTransformerBlock(nn.Module):
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
-            pass
-            #flops += nW * self.token_attn.flops(self.window_size * self.window_size)
-            #flops += nW * self.chanl_attn.flops(self.window_size * self.window_size)
-            #flops += nW * self.neibr_attn.flops(self.window_size * self.window_size)
+            flops += nW * self.SSA.flops(self.window_size * self.window_size)
+            flops += nW * self.CSA.flops(self.window_size * self.window_size)
+            flops += nW * self.SMLP.flops(self.window_size * self.window_size)
+            flops += nW * self.CMLP.flops(self.window_size * self.window_size)
+            # proj
+            flops += self.dim * self.dim * H * W
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
-        # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
+            # proj
+            flops += 2 * self.dim * self.dim * self.mlp_ratio * H * W
+        
         # norm2
         flops += self.dim * H * W
         return flops
