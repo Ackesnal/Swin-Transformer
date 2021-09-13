@@ -81,143 +81,6 @@ def window_reverse(windows, window_size, H, W):
         x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
         x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
-
-
-class SSA(nn.Module):
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
-        super().__init__()
-        self.dim = dim
-        self.window_size = window_size  # Wh, Ww
-        self.num_heads = num_heads
-        self.mode = mode
-        self.scale = qk_scale or (dim // num_heads) ** -0.5
-        
-        self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
-        
-        # get pair-wise relative position index for each token inside the window
-        coords_h = torch.arange(window_size)
-        coords_w = torch.arange(window_size)
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
-        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += window_size - 1  # shift to start from 0
-        relative_coords[:, :, 1] += window_size - 1
-        relative_coords[:, :, 0] *= 2 * window_size - 1
-        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        self.relative_position_index = relative_position_index
-        trunc_normal_(self.relative_position_bias_table, std=.02)
-        
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.softmax = nn.Softmax(dim=-1)
-            
-    def forward(self, x, mask=None):
-        # spatial attention
-        B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-          
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
-            
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)
-            
-        if mask is not None:
-            nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-            attn = attn.view(-1, self.num_heads, N, N)
-            attn = self.softmax(attn)
-        else:
-            attn = self.softmax(attn)
-                
-        attn = self.attn_drop(attn)
-        
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-        return x
-
-
-class CSA(nn.Module):
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
-        super().__init__()
-        self.dim = dim
-        self.window_size = window_size  # Wh, Ww
-        self.num_heads = num_heads
-        self.mode = mode
-        self.scale = qk_scale or (dim // num_heads) ** -0.5
-        
-        # define a parameter table of relative position bias
-        self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
-        
-        # get pair-wise relative position index for each token inside the window
-        coords_h = torch.arange(window_size)
-        coords_w = torch.arange(1)
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
-        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += window_size - 1  # shift to start from 0
-        relative_coords[:, :, 1] += window_size - 1
-        relative_coords[:, :, 0] *= 2 * window_size - 1
-        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        self.relative_position_index = relative_position_index
-        trunc_normal_(self.relative_position_bias_table, std=.02)
-        
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.softmax = nn.Softmax(dim=-1)
-            
-    def forward(self, x):
-        # channel attention
-        B_, N, C = x.shape
-            
-        x = x.transpose(-2, -1)
-        qkv = self.qkv(x).reshape(B_, self.num_heads, C//self.num_heads, 3, N).permute(3, 0, 1, 2, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-            
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
-            
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size, self.window_size, -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)
-            
-        attn = self.softmax(attn)
-        attn = self.attn_drop(attn)
-        
-        x = (attn @ v).transpose(1, 2).reshape(B_, C, N).transpose(-2, -1)
-            
-        return x
-        
-
-class SMLP(nn.Module):
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
-        super().__init__()
-        self.dim = dim
-        self.mlp = Mlp(in_features=dim, drop=proj_drop)
-            
-    def forward(self, x):
-        # spatial mlp
-        x = self.mlp(x)
-        return x
-        
-        
-class CMLP(nn.Module):
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., mode = 0):
-        super().__init__()
-        self.dim = dim
-        self.mlp = Mlp(in_features=dim, drop=proj_drop)
-            
-    def forward(self, x):
-        # channel mlp
-        x = x.transpose(-1, -2)
-        x = self.mlp(x)
-        x = x.transpose(-1, -2)
-        return x
         
 
 class WindowAttention(nn.Module):
@@ -500,12 +363,13 @@ class SwinTransformerBlock(nn.Module):
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
                                               
 
-            self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            #self.norm2 = norm_layer(dim)
-            #mlp_hidden_dim = int(dim * mlp_ratio)
-            #self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-            self.cat_norm = norm_layer(dim)
-            self.activate = nn.GELU()
+            self.drop_path_1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+            self.cat_norm_1 = norm_layer(dim)
+            self.activate_1 = nn.GELU()
+            self.drop_path_2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+            self.cat_norm_2 = norm_layer(dim)
+            self.activate_2 = nn.GELU()
+            self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
             if self.shift_size > 0:
                 # calculate attention mask for SSA
@@ -570,7 +434,7 @@ class SwinTransformerBlock(nn.Module):
             shortcut = x
             x = self.norm1(x).view(B, H, W, C)
     
-            # cyclic shift
+            # padding shift
             if self.shift_size > 0:
                 shifted_x = F.pad(x.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
                                       self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
@@ -581,40 +445,29 @@ class SwinTransformerBlock(nn.Module):
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
-            # merge windows
-            """x0 = torch.jit.fork(self.SSA, x_windows[:, :, :C//4], self.attn_mask)
-            x1 = torch.jit.fork(self.CSA, x_windows[:, :, C//4:C//2])
-            x2 = torch.jit.fork(self.SMLP, x_windows[:, :, C//2:3*C//4])
-            x3 = torch.jit.fork(self.CMLP, x_windows[:, :, 3*C//4:])
-            x_windows = self.cat_norm(torch.cat((torch.jit.wait(x0), torch.jit.wait(x1), torch.jit.wait(x2), torch.jit.wait(x3)), dim = 2))
-            """
-            x_windows = torch.cat((self.SSA(x_windows[:, :, :C//4], self.attn_mask),
-                                                 self.CSA(x_windows[:, :, C//4:C//2]),
-                                                 self.SMLP(x_windows[:, :, C//2:3*C//4]),
-                                                 self.CMLP(x_windows[:, :, 3*C//4:])), 
-                                                 dim = 2)
+            # calculate and merge windows
+            x_ssa = self.SSA(x_windows[:, :, :C//4], self.attn_mask)
+            x_csa = self.CSA(x_windows[:, :, C//4:C//2])
+            x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
+            x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
+            x_windows = x_windows + self.drop_path_1(self.activate_1(self.cat_norm_1(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))))
                                                  
-            x_windows = x_windows.view(-1, self.window_size, self.window_size, C)
+            x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
             if self.shift_size > 0:
                 shifted_x = window_reverse(x_windows, self.window_size, H+self.window_size, W+self.window_size)  # B H' W' C
             else:
-                shifted_x = window_reverse(x_windows, self.window_size, H, W)
+                shifted_x = window_reverse(x_windows, self.window_size, H, W) # B H W C
             
-            # reverse cyclic shift
+            # reverse padding shift
             if self.shift_size > 0:
-                shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :]
-            else:
-                shifted_x = shifted_x
+                shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
+
+            # Point-wise Conv
             shifted_x = shifted_x.reshape(B, H * W, C)
-    
-            # FFN
-            shifted_x = torch.cat((shifted_x[:, :, 0::4],
-                                   shifted_x[:, :, 1::4],
-                                   shifted_x[:, :, 2::4],
-                                   shifted_x[:, :, 3::4]), dim = 2)
-                                   
-            x = shortcut + self.drop_path(self.activate(self.cat_norm(shifted_x)))
+            shifted_x = self.proj(shifted_x.permute(0, 2, 1)).permute(0, 2, 1)
+            
+            x = shortcut + self.drop_path_2(self.activate_2(self.cat_norm_2(shifted_x)))
             
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
@@ -955,8 +808,8 @@ class SwinTransformer(nn.Module):
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        #self.subhead = nn.Linear(self.num_features//4, num_classes) if num_classes > 0 else nn.Identity()
-        self.activate = nn.GELU()
+        # self.subhead = nn.Linear(self.num_features//4, num_classes) if num_classes > 0 else nn.Identity()
+        # self.activate = nn.GELU()
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -1002,7 +855,7 @@ class SwinTransformer(nn.Module):
         x1 = x[:, x.shape[1]//4:x.shape[1]//2]
         x2 = x[:, x.shape[1]//2:3*x.shape[1]//4]
         x3 = x[:, 3*x.shape[1]//4:] """
-        x = self.head(self.activate(x))
+        x = self.head(x)
         return [x]#, self.subhead(x0), self.subhead(x1), self.subhead(x2), self.subhead(x3)]
 
     def flops(self):
