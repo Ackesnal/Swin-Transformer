@@ -2,7 +2,8 @@ MODEL:
   TYPE: swin
   NAME: swin_test_tiny_patch4_window7_224
   DROP_PATH_RATE: 0.2
+  DROP_RATE : 0.15
   SWIN:
     EMBED_DIM: 64
-    DEPTHS: [ 2, 6, 18, 3 ]
+    DEPTHS: [ 2, 8, 24, 3 ]
     NUM_HEADS: [ 4, 8, 16, 32]
