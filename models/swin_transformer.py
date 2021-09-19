@@ -156,7 +156,6 @@ class WindowAttention(nn.Module):
             self.softmax = nn.Softmax(dim=-1)
         elif self.mode == 3 or self.mode == 4:
             self.mlp = Mlp(in_features=dim, drop=proj_drop)
-            self.drop = nn.Dropout(attn_drop)
             
     def forward(self, x, mask=None):
         """
@@ -246,13 +245,13 @@ class WindowAttention(nn.Module):
             
         elif self.mode == 3:
             # spatial MLP
-            x = self.drop(self.mlp(x))
+            x = self.mlp(x)
             return x
             
         elif self.mode == 4:
             # channel MLP
             x = x.transpose(-1, -2)
-            x = self.drop(self.mlp(x))
+            x = self.mlp(x)
             x = x.transpose(-1, -2)
             return x
         
