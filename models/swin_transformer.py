@@ -463,7 +463,7 @@ class SwinTransformerBlock(nn.Module):
             x_csa = self.CSA(x_windows[:, :, C//4:C//2])
             x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
             x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-            x_windows = self.drop_path(x_windows + torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
+            x_windows = x_windows + self.drop_path(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
                                                  
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
