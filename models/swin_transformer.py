@@ -445,7 +445,7 @@ class SwinTransformerBlock(nn.Module):
             B, L, C = x.shape
             assert L == H * W, "input feature has wrong size"
     
-            shortcut = x
+            # shortcut = x
             x = self.norm1(x).view(B, H, W, C)
     
             # padding shift
@@ -479,7 +479,7 @@ class SwinTransformerBlock(nn.Module):
 
             # Point-wise Conv
             shifted_x = shifted_x.reshape(B, H * W, C)
-            x = shortcut + self.drop_path(self.activate(self.proj(self.norm2(shifted_x).permute(0, 2, 1)).permute(0, 2, 1)))
+            x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x).permute(0, 2, 1)).permute(0, 2, 1)))
             
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
