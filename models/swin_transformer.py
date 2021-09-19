@@ -225,7 +225,11 @@ class WindowAttention(nn.Module):
             qkv = self.qkv(x).reshape(B_, self.num_heads, C//self.num_heads, 3, N).permute(3, 0, 1, 2, 4)
             q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
             
+            q = F.normalize(q, dim=-1, p=2)
+            k = F.normalize(k, dim=-1, p=2)
+            
             q = q * self.scale
+            
             attn = (q @ k.transpose(-2, -1))
             
             relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.window_size, self.window_size, -1)  # Wh*Ww,Wh*Ww,nH
@@ -527,7 +531,7 @@ class SwinTransformerBlock(nn.Module):
             flops += nW * self.SMLP.flops(self.window_size * self.window_size)
             flops += nW * self.CMLP.flops(self.window_size * self.window_size)
             # proj
-            # flops += self.dim * self.dim * H * W
+            flops += self.dim * self.dim * H * W
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # proj
