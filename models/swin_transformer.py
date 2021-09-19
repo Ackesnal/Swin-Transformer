@@ -156,6 +156,7 @@ class WindowAttention(nn.Module):
             self.softmax = nn.Softmax(dim=-1)
         elif self.mode == 3 or self.mode == 4:
             self.mlp = Mlp(in_features=dim, drop=proj_drop)
+            self.drop = nn.Dropout(attn_drop)
             
     def forward(self, x, mask=None):
         """
@@ -245,13 +246,13 @@ class WindowAttention(nn.Module):
             
         elif self.mode == 3:
             # spatial MLP
-            x = self.mlp(x)
+            x = self.drop(self.mlp(x))
             return x
             
         elif self.mode == 4:
             # channel MLP
             x = x.transpose(-1, -2)
-            x = self.mlp(x)
+            x = self.drop(self.mlp(x))
             x = x.transpose(-1, -2)
             return x
         
@@ -379,8 +380,7 @@ class SwinTransformerBlock(nn.Module):
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
                                               
 
-            self.drop_path_1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            self.drop_path_2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+            self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.activate = nn.GELU()
             self.norm2 = norm_layer(dim)
             self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
@@ -464,7 +464,7 @@ class SwinTransformerBlock(nn.Module):
             x_csa = self.CSA(x_windows[:, :, C//4:C//2])
             x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
             x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-            x_windows = torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
+            x_windows = x_windows + torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
                                                  
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
@@ -478,8 +478,8 @@ class SwinTransformerBlock(nn.Module):
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
 
             # Point-wise Conv
-            x = shortcut + self.drop_path_1(shifted_x.reshape(B, H * W, C))
-            x = x + self.drop_path_2(self.activate(self.proj(self.norm2(x).permute(0, 2, 1)).permute(0, 2, 1)))
+            shifted_x = shifted_x.reshape(B, H * W, C)
+            x = shortcut + self.drop_path(self.activate(self.proj(self.norm2(shifted_x).permute(0, 2, 1)).permute(0, 2, 1)))
             
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
