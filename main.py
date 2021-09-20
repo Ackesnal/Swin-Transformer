@@ -45,6 +45,7 @@ def parse_option():
 
     parser.add_argument('--window-size', default=None, help="window size")
     parser.add_argument('--multi-attn', default=False, help="if use multiple attentions")
+    parser.add_argument('--same-attn', default=False, help="when use multiple attentions, if they are all the same")
 
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
