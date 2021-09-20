@@ -225,9 +225,6 @@ class WindowAttention(nn.Module):
             qkv = self.qkv(x).reshape(B_, self.num_heads, C//self.num_heads, 3, N).permute(3, 0, 1, 2, 4)
             q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
             
-            q = F.normalize(q, dim=-1, p=2)
-            k = F.normalize(k, dim=-1, p=2)
-            
             q = q * self.scale
             
             attn = (q @ k.transpose(-2, -1))
@@ -459,7 +456,7 @@ class SwinTransformerBlock(nn.Module):
             B, L, C = x.shape
             assert L == H * W, "input feature has wrong size"
     
-            # shortcut = x
+            shortcut = x
             x = self.norm1(x).view(B, H, W, C)
     
             # padding shift
@@ -479,7 +476,7 @@ class SwinTransformerBlock(nn.Module):
                 x_csa = self.CSA(x_windows[:, :, C//4:C//2])
                 x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
                 x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-                x_windows = x_windows + self.drop_path(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
+                x_windows = self.drop_path(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
                 
             elif self.same_attn:
                 x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
@@ -487,7 +484,7 @@ class SwinTransformerBlock(nn.Module):
                 x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
                 x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
                 torch.cuda.empty_cache()
-                x_windows = x_windows + self.drop_path(torch.cat((x_1, x_2, x_3, x_4), dim = 2))
+                x_windows = self.drop_path(torch.cat((x_1, x_2, x_3, x_4), dim = 2))
                 
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
@@ -501,7 +498,7 @@ class SwinTransformerBlock(nn.Module):
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
 
             # Point-wise Conv
-            shifted_x = shifted_x.reshape(B, H * W, C)
+            shifted_x = short_cut + shifted_x.reshape(B, H * W, C)
             x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x).permute(0, 2, 1)).permute(0, 2, 1)))
             
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
