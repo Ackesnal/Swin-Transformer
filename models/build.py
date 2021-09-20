@@ -29,7 +29,8 @@ def build_model(config):
                                 ape=config.MODEL.SWIN.APE,
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
-                                multi_attn=config.MODEL.SWIN.MULTI_ATTN)
+                                multi_attn=config.MODEL.SWIN.MULTI_ATTN,
+                                same_attn=config.MODEL.SWIN.SAME_ATTN)
     elif model_type == 'swin_mlp':
         model = SwinMLP(img_size=config.DATA.IMG_SIZE,
                         patch_size=config.MODEL.SWIN_MLP.PATCH_SIZE,
