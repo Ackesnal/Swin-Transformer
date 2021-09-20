@@ -483,11 +483,15 @@ class SwinTransformerBlock(nn.Module):
                 
             elif self.same_attn:
                 x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
+                torch.cuda.empty_cache()
                 x_2 = self.attn_2(x_windows[:, :, C//4:C//2], self.attn_mask)
+                torch.cuda.empty_cache()
                 x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
+                torch.cuda.empty_cache()
                 x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
+                torch.cuda.empty_cache()
                 x_windows = x_windows + self.drop_path(torch.cat((x_1, x_2, x_3, x_4), dim = 2))
-                                                 
+                
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
             if self.shift_size > 0:
