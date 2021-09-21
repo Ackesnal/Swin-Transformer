@@ -320,11 +320,10 @@ class SwinTransformerBlock(nn.Module):
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
-
-        self.norm1 = norm_layer(dim)
         
         if not self.multi_attn:
             # 原本的 swin transformer
+            self.norm1 = norm_layer(dim)
             self.attn = WindowAttention(dim, window_size=self.window_size, num_heads=num_heads, qkv_bias=qkv_bias, 
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -361,10 +360,12 @@ class SwinTransformerBlock(nn.Module):
         elif self.multi_attn:
             # 4 种 multi-channel attention 的 swin transformer
             
+            self.norm1 = nn.GroupNorm(4, dim)
+            self.norm2 = nn.GroupNorm(4, dim)
+            
             if not self.same_attn:
                 spatial_dim = dim // 4
                 channel_dim = int(self.window_size ** 2)
-                
                 self.SSA = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
                                                                        
@@ -393,7 +394,6 @@ class SwinTransformerBlock(nn.Module):
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.activate = nn.GELU()
-            self.norm2 = norm_layer(dim)
             self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
             if self.shift_size > 0:
@@ -457,14 +457,14 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x).view(B, H, W, C)
-    
+            x = self.norm1(x.permute(0,2,1)).view(B, C, H, W)
+            
             # padding shift
             if self.shift_size > 0:
-                shifted_x = F.pad(x.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
+                shifted_x = F.pad(x, (self.shift_size, self.window_size - self.shift_size, 
                                       self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
             else:
-                shifted_x = x
+                shifted_x = x.permute(0, 2, 3, 1)
             
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
@@ -498,8 +498,8 @@ class SwinTransformerBlock(nn.Module):
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
 
             # Point-wise Conv
-            shifted_x = short_cut + shifted_x.reshape(B, H * W, C)
-            x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x).permute(0, 2, 1)).permute(0, 2, 1)))
+            shifted_x = shortcut + shifted_x.reshape(B, H * W, C)
+            x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
             
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
