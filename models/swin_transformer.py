@@ -154,8 +154,10 @@ class WindowAttention(nn.Module):
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.attn_drop = nn.Dropout(attn_drop)
             self.softmax = nn.Softmax(dim=-1)
+            self.proj = nn.Linear(dim, dim)
+            self.proj_drop = nn.Dropout(proj_drop)
         elif self.mode == 3 or self.mode == 4:
-            self.mlp = Mlp(in_features=dim, drop=proj_drop)
+            self.mlp = Mlp(in_features=dim, hidden_features=dim*4, drop=proj_drop)
             
     def forward(self, x, mask=None):
         """
@@ -215,6 +217,8 @@ class WindowAttention(nn.Module):
             attn = self.attn_drop(attn)
         
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+            x = self.proj(x)
+            x = self.proj_drop(x)
             return x
         
         elif self.mode == 2:
@@ -236,8 +240,10 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
             attn = self.attn_drop(attn)
         
-            x = (attn @ v).transpose(1, 2).reshape(B_, C, N).transpose(-2, -1)
-            
+            x = (attn @ v).transpose(1, 2).reshape(B_, C, N) 
+            x = self.proj(x)
+            x = self.proj_drop(x)
+            x = x.transpose(-2, -1)
             return x
             
         elif self.mode == 3:
@@ -278,8 +284,10 @@ class WindowAttention(nn.Module):
             flops += self.num_heads * N * (self.dim // self.num_heads) * N
             #  x = (attn @ v)
             flops += self.num_heads * N * N * (self.dim // self.num_heads)
+            # x = self.proj(x)
+            flops += N * self.dim * self.dim
         elif self.mode == 3 or self.mode == 4:
-            flops += N * self.dim * self.dim * 2
+            flops += N * self.dim * self.dim * 4 * 2
             
         return flops
 
@@ -361,7 +369,7 @@ class SwinTransformerBlock(nn.Module):
             # 4 种 multi-channel attention 的 swin transformer
             
             self.norm1 = nn.GroupNorm(4, dim)
-            self.norm2 = nn.GroupNorm(4, dim)
+            # self.norm2 = nn.GroupNorm(4, dim)
             
             if not self.same_attn:
                 spatial_dim = dim // 4
@@ -393,8 +401,8 @@ class SwinTransformerBlock(nn.Module):
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            self.activate = nn.GELU()
-            self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
+            # self.activate = nn.GELU()
+            # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
             if self.shift_size > 0:
                 # calculate attention mask for SSA
@@ -476,7 +484,7 @@ class SwinTransformerBlock(nn.Module):
                 x_csa = self.CSA(x_windows[:, :, C//4:C//2])
                 x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
                 x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-                x_windows = self.drop_path(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
+                x_windows = torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
                 
             elif self.same_attn:
                 x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
@@ -497,10 +505,15 @@ class SwinTransformerBlock(nn.Module):
             if self.shift_size > 0:
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
 
-            # Point-wise Conv
             shifted_x = shortcut + shifted_x.reshape(B, H * W, C)
-            x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
             
+            # Shuffle
+            x = self.drop_path(shifted_x.reshape(B, L, 4, C//4).permute(0,1,3,2).contiguous().view(B, L, C))
+            
+            # 1x1 conv
+            # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
+            
+            # MLP
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
     
             return x
@@ -557,14 +570,14 @@ class SwinTransformerBlock(nn.Module):
                 flops += nW * self.attn_3.flops(self.window_size * self.window_size)
                 flops += nW * self.attn_4.flops(self.window_size * self.window_size)
             # proj
-            flops += self.dim * self.dim * H * W
+            # flops += self.dim * self.dim * H * W
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # proj
             flops += 2 * self.dim * self.dim * self.mlp_ratio * H * W
         
         # norm2
-        flops += self.dim * H * W
+        # flops += self.dim * H * W
         return flops
 
 
