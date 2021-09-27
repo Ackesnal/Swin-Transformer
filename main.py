@@ -326,6 +326,9 @@ if __name__ == '__main__':
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
+    elif 'SLURM_PROCID' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['SLURM_PROCID'])
+        world_size = int(os.environ['WORLD_SIZE'])
     else:
         rank = -1
         world_size = -1
