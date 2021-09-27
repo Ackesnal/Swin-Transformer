@@ -261,8 +261,8 @@ def update_config(config, args):
             config.MODEL.SWIN_MLP.SAME_ATTN = args.same_attn
             
     # set local rank for distributed training
-    if args.local_rank == -1:
-        config.LOCAL_RANK = int(os.environ['SLURM_PROCID']) % torch.cuda.device_count()
+    if "SLURM_LOCALID" in os.environ:
+        config.LOCAL_RANK = int(os.environ["SLURM_LOCALID"])
     else:
         config.LOCAL_RANK = args.local_rank
 
