@@ -329,7 +329,6 @@ if __name__ == '__main__':
     elif 'SLURM_PROCID' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         world_size = int(os.environ['WORLD_SIZE'])
-        config.LOCAL_RANK = rank % torch.cuda.device_count()
     else:
         rank = -1
         world_size = -1
