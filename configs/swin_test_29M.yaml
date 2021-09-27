@@ -4,5 +4,5 @@ MODEL:
   DROP_PATH_RATE: 0.05
   SWIN:
     EMBED_DIM: 256
-    DEPTHS: [ 2, 4, 6, 2]
+    DEPTHS: [ 2, 4, 6, 4]
     NUM_HEADS: [ 4, 8, 16, 32]
