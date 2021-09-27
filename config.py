@@ -8,6 +8,7 @@
 import os
 import yaml
 from yacs.config import CfgNode as CN
+import torch
 
 _C = CN()
 
@@ -260,7 +261,10 @@ def update_config(config, args):
             config.MODEL.SWIN_MLP.SAME_ATTN = args.same_attn
             
     # set local rank for distributed training
-    config.LOCAL_RANK = args.local_rank
+    if args.local_rank == -1:
+        config.LOCAL_RANK = args.rank % torch.cuda.device_count()
+    else:
+        config.LOCAL_RANK = args.local_rank
 
     # output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
