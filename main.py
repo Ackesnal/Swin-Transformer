@@ -68,7 +68,7 @@ def parse_option():
     parser.add_argument('--throughput', action='store_true', help='Test throughput only')
 
     # distributed training
-    parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
+    parser.add_argument("--local_rank", default=-1, type=int, help='local rank for DistributedDataParallel')
 
     args, unparsed = parser.parse_known_args()
 
@@ -329,6 +329,7 @@ if __name__ == '__main__':
     elif 'SLURM_PROCID' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         world_size = int(os.environ['WORLD_SIZE'])
+        config.LOCAL_RANK = rank % torch.cuda.device_count()
     else:
         rank = -1
         world_size = -1
