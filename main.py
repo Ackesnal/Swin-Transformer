@@ -10,6 +10,7 @@ import time
 import argparse
 import datetime
 import numpy as np
+import hostlist
 
 import torch
 import torch.backends.cudnn as cudnn
