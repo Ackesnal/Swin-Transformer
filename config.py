@@ -260,7 +260,10 @@ def update_config(config, args):
             config.MODEL.SWIN_MLP.SAME_ATTN = args.same_attn
             
     # set local rank for distributed training
-    config.LOCAL_RANK = args.local_rank
+    if args.local_rank == -1 and "CUDA_VISIBLE_DEVICES" in os.environ:
+        config.LOCAL_RANK = os.environ["CUDA_VISIBLE_DEVICES"]
+    else:
+        config.LOCAL_RANK = args.local_rank
 
     # output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
