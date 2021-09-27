@@ -221,6 +221,7 @@ class WindowAttention(nn.Module):
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
             x = self.proj(x)
             x = self.proj_drop(x)
+            del q,k,v,qkv,attn
             return x
         
         elif self.mode == 2:
@@ -246,6 +247,7 @@ class WindowAttention(nn.Module):
             x = self.proj(x)
             x = self.proj_drop(x)
             x = x.transpose(-2, -1)
+            del q,k,v,qkv,attn
             return x
             
         elif self.mode == 3:
@@ -298,7 +300,7 @@ class WindowAttention(nn.Module):
             # x = self.proj(x)
             flops += N * self.dim * self.dim 
         elif self.mode == 3 or self.mode == 4:
-            flops += N * self.dim * self.dim * 2 * 4
+            flops += N * self.dim * self.dim * 2 * 4 
             
         return flops
 
@@ -496,6 +498,7 @@ class SwinTransformerBlock(nn.Module):
                 x_csa = self.CSA(x_windows[:, :, C//4:C//2])
                 x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
                 x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
+                torch.cuda.empty_cache()
                 """
                 x_ssa = self.SSA(x_windows[:, :, :C//16*(1+self.layer*2)], self.attn_mask)
                 x_csa = self.CSA(x_windows[:, :, C//16*(1+self.layer*2):C//2])
@@ -510,7 +513,7 @@ class SwinTransformerBlock(nn.Module):
                 x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
                 x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
                 torch.cuda.empty_cache()
-                x_windows = torch.cat((x_1, x_2, x_3, x_4), dim = 2)
+                x_windows = self.activate(torch.cat((x_1, x_2, x_3, x_4), dim = 2))
                 
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
@@ -533,7 +536,7 @@ class SwinTransformerBlock(nn.Module):
             
             # MLP
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
-    
+            # del x_windows, shifted_x, shortcut, x_ssa, x_csa, x_smlp, x_cmlp
             return x
     
     def change_window_size(self, window_size):
