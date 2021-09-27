@@ -104,9 +104,9 @@ class WindowAttention(nn.Module):
         self.window_size = window_size  # Wh, Ww
         self.num_heads = num_heads
         self.mode = mode
-        self.scale = qk_scale or (dim // num_heads) ** -0.5
         
         if self.mode == 0 or self.mode == 1:
+            self.scale = qk_scale or (dim // num_heads) ** -0.5
             # define a parameter table of relative position bias
             self.relative_position_bias_table = nn.Parameter(
                 torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
@@ -126,6 +126,7 @@ class WindowAttention(nn.Module):
             trunc_normal_(self.relative_position_bias_table, std=.02)
         
         elif self.mode == 2:
+            self.scale = qk_scale or dim ** -0.5
             # define a parameter table of relative position bias
             self.relative_position_bias_table = nn.Parameter(
                 torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
@@ -145,6 +146,7 @@ class WindowAttention(nn.Module):
             trunc_normal_(self.relative_position_bias_table, std=.02)
         
         if self.mode == 0:
+            self.scale = qk_scale or (dim // num_heads) ** -0.5
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.attn_drop = nn.Dropout(attn_drop)
             self.proj = nn.Linear(dim, dim)
@@ -277,7 +279,7 @@ class WindowAttention(nn.Module):
             flops += self.num_heads * N * N * (self.dim // self.num_heads)
             # x = self.proj(x)
             flops += N * self.dim * self.dim
-        elif self.mode == 1 or self.mode == 2:
+        elif self.mode == 1:
             # qkv = self.qkv(x)
             flops += N * self.dim * 3 * self.dim
             # attn = (q @ k.transpose(-2, -1))
@@ -285,9 +287,18 @@ class WindowAttention(nn.Module):
             #  x = (attn @ v)
             flops += self.num_heads * N * N * (self.dim // self.num_heads)
             # x = self.proj(x)
-            flops += N * self.dim * self.dim
+            flops += N * self.dim * self.dim 
+        elif self.mode == 2:
+            # qkv = self.qkv(x)
+            flops += N * self.dim * 3 * self.dim
+            # attn = (q @ k.transpose(-2, -1))
+            flops += self.num_heads * (N // self.num_heads) * self.dim  * (N // self.num_heads)
+            #  x = (attn @ v)
+            flops += self.num_heads * (N // self.num_heads) * self.dim  * (N // self.num_heads)
+            # x = self.proj(x)
+            flops += N * self.dim * self.dim 
         elif self.mode == 3 or self.mode == 4:
-            flops += N * self.dim * self.dim * 4 * 2
+            flops += N * self.dim * self.dim * 2 * 4
             
         return flops
 
@@ -311,7 +322,7 @@ class SwinTransformerBlock(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
     
-    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
+    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, layer=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm, multi_attn = False, same_attn = False):
         super().__init__()
@@ -323,6 +334,7 @@ class SwinTransformerBlock(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.multi_attn = multi_attn
         self.same_attn = same_attn
+        self.layer = layer
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
@@ -377,13 +389,13 @@ class SwinTransformerBlock(nn.Module):
                 self.SSA = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
                                                                        
-                self.CSA = WindowAttention(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+                self.CSA = WindowAttention(channel_dim, window_size=dim // num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2)
                 
                 self.SMLP = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                             qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
                 
-                self.CMLP = WindowAttention(channel_dim, window_size=dim//num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
+                self.CMLP = WindowAttention(channel_dim, window_size=dim // num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
                                             qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
                                               
             if self.same_attn:
@@ -401,7 +413,7 @@ class SwinTransformerBlock(nn.Module):
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            # self.activate = nn.GELU()
+            self.activate = nn.GELU()
             # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
             if self.shift_size > 0:
@@ -484,7 +496,13 @@ class SwinTransformerBlock(nn.Module):
                 x_csa = self.CSA(x_windows[:, :, C//4:C//2])
                 x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
                 x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-                x_windows = torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
+                """
+                x_ssa = self.SSA(x_windows[:, :, :C//16*(1+self.layer*2)], self.attn_mask)
+                x_csa = self.CSA(x_windows[:, :, C//16*(1+self.layer*2):C//2])
+                x_smlp = self.SMLP(x_windows[:, :, C//2:C//16*(9+self.layer*2)])
+                x_cmlp = self.CMLP(x_windows[:, :, C//16*(9+self.layer*2):])
+                """
+                x_windows = self.activate(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
                 
             elif self.same_attn:
                 x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
@@ -492,7 +510,7 @@ class SwinTransformerBlock(nn.Module):
                 x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
                 x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
                 torch.cuda.empty_cache()
-                x_windows = self.drop_path(torch.cat((x_1, x_2, x_3, x_4), dim = 2))
+                x_windows = torch.cat((x_1, x_2, x_3, x_4), dim = 2)
                 
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
@@ -653,7 +671,7 @@ class BasicLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop=0., attn_drop=0., drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, 
-                 multi_attn = False, same_attn = False):
+                 multi_attn = False, same_attn = False, layer=0):
 
         super().__init__()
         self.dim = dim
@@ -670,7 +688,7 @@ class BasicLayer(nn.Module):
                                                               mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                                                               drop=drop, attn_drop=attn_drop,
                                                               drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                                              norm_layer=norm_layer, 
+                                                              norm_layer = norm_layer, layer = layer,
                                                               multi_attn = multi_attn, same_attn = same_attn)
                                          for i in range(depth)])
         elif type(window_size) == list:
@@ -853,7 +871,7 @@ class SwinTransformer(nn.Module):
                                qkv_bias=qkv_bias, qk_scale=qk_scale,
                                drop=drop_rate, attn_drop=attn_drop_rate,
                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               norm_layer=norm_layer,
+                               norm_layer=norm_layer, layer = i_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint, multi_attn = multi_attn, same_attn = same_attn)
             self.layers.append(layer)
