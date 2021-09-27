@@ -322,16 +322,22 @@ if __name__ == '__main__':
     if config.AMP_OPT_LEVEL != "O0":
         assert amp is not None, "amp not installed!"
 
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    
+    if 'SLURM_PROCID' in os.environ:
+        rank = int(os.environ['SLURM_PROCID'])
+        world_size = int(os.environ['SLURM_NTASKS'])
+        hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
+        gpu_ids = os.environ['SLURM_STEP_GPUS'].split(",")
+        os.environ['MASTER_ADDR'] = hostnames[0]
+        os.environ['MASTER_PORT'] = str(12345 + int(min(gpu_ids)))
+    elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
-    elif 'SLURM_PROCID' in os.environ and 'WORLD_SIZE' in os.environ:
-        rank = int(os.environ['SLURM_PROCID'])
-        world_size = int(os.environ['WORLD_SIZE'])
     else:
         rank = -1
         world_size = -1
+    
     torch.cuda.set_device(config.LOCAL_RANK)
     torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
     torch.distributed.barrier()
