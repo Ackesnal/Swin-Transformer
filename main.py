@@ -11,6 +11,7 @@ import argparse
 import datetime
 import numpy as np
 import hostlist
+import random
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -330,7 +331,7 @@ if __name__ == '__main__':
         hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
         gpu_ids = os.environ['SLURM_STEP_GPUS'].split(",")
         os.environ['MASTER_ADDR'] = hostnames[0]
-        os.environ['MASTER_PORT'] = str(12345 + int(min(gpu_ids)))
+        os.environ['MASTER_PORT'] = str(random.randint(50000, 80000) + int(min(gpu_ids)))
     elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
