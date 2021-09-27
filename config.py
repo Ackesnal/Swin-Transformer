@@ -262,7 +262,7 @@ def update_config(config, args):
             
     # set local rank for distributed training
     if args.local_rank == -1:
-        config.LOCAL_RANK = args.rank % torch.cuda.device_count()
+        config.LOCAL_RANK = int(os.environ['SLURM_PROCID']) % torch.cuda.device_count()
     else:
         config.LOCAL_RANK = args.local_rank
 
