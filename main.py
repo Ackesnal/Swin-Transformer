@@ -71,6 +71,7 @@ def parse_option():
 
     # distributed training
     parser.add_argument("--local_rank", default=-1, type=int, help='local rank for DistributedDataParallel')
+    parser.add_argument("--master_port", default=10062, type=int, help='local rank for DistributedDataParallel')
 
     args, unparsed = parser.parse_known_args()
 
@@ -331,7 +332,7 @@ if __name__ == '__main__':
         hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
         gpu_ids = os.environ['SLURM_STEP_GPUS'].split(",")
         os.environ['MASTER_ADDR'] = hostnames[0]
-        os.environ['MASTER_PORT'] = str(random.randint(50000, 80000) + int(min(gpu_ids)))
+        os.environ['MASTER_PORT'] = str(_.master_port + int(min(gpu_ids)))
     elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
