@@ -602,7 +602,7 @@ class SwinTransformerBlock(nn.Module):
             flops += 2 * self.dim * self.dim * self.mlp_ratio * H * W
         
         # norm2
-        # flops += self.dim * H * W
+        flops += self.dim * H * W
         return flops
 
 
