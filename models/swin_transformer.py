@@ -383,8 +383,9 @@ class SwinTransformerBlock(nn.Module):
             # 4 种 multi-channel attention 的 swin transformer
             
             self.norm1 = norm_layer(dim)
+            # self.norm1 = nn.GroupNorm(4, dim)
             # self.norm2 = norm_layer(dim)
-            # self.norm2 = nn.GroupNorm(4, dim)
+            self.norm2 = nn.GroupNorm(4, dim)
             
             if not self.same_attn:
                 spatial_dim = dim // 4
@@ -480,7 +481,8 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x.permute(0,2,1)).view(B, C, H, W)
+            x = self.norm1(x)
+            x = x.view(B, H, W, C).permute(0, 3, 1, 2)
             
             # padding shift
             if self.shift_size > 0:
@@ -505,14 +507,15 @@ class SwinTransformerBlock(nn.Module):
                 x_smlp = self.SMLP(x_windows[:, :, C//2:C//16*(9+self.layer*2)])
                 x_cmlp = self.CMLP(x_windows[:, :, C//16*(9+self.layer*2):])
                 """
-                x_windows = self.activate(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
+                x_windows = torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
+                x_windows = self.activate(self.norm2(x_windows.permute(0,2,1)).permute(0,1,2))
                 
             elif self.same_attn:
                 x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
                 x_2 = self.attn_2(x_windows[:, :, C//4:C//2], self.attn_mask)
                 x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
                 x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
-                x_windows = self.activate(torch.cat((x_1, x_2, x_3, x_4), dim = 2))
+                x_windows = torch.cat((x_1, x_2, x_3, x_4), dim = 2)
                 
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
@@ -524,11 +527,13 @@ class SwinTransformerBlock(nn.Module):
             # reverse padding shift
             if self.shift_size > 0:
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
-
+            
+            
+            shifted_x = self.activate(self.norm2(shifted_x.permute(0,3,1,2)).permute(0,2,3,1))
             shifted_x = shortcut + shifted_x.reshape(B, H * W, C)
             
             # Shuffle
-            x = self.drop_path(shifted_x.reshape(B, L, 4, C//4).permute(0,1,3,2).contiguous().view(B, L, C))
+            x = self.drop_path(shifted_x.reshape(B, L, 4, C//4).permute(0,1,3,2).reshape(B, L, C))
             
             # 1x1 conv
             # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
