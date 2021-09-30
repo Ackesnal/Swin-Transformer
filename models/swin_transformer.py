@@ -507,8 +507,7 @@ class SwinTransformerBlock(nn.Module):
                 x_smlp = self.SMLP(x_windows[:, :, C//2:C//16*(9+self.layer*2)])
                 x_cmlp = self.CMLP(x_windows[:, :, C//16*(9+self.layer*2):])
                 """
-                x_windows = torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2)
-                x_windows = self.activate(self.norm2(x_windows.permute(0,2,1)).permute(0,1,2))
+                x_windows = self.activate(self.norm2(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2).permute(0,2,1)).permute(0,1,2))
                 
             elif self.same_attn:
                 x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
