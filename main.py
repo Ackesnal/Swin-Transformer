@@ -332,8 +332,7 @@ if __name__ == '__main__':
         hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
         gpu_ids = os.environ['SLURM_STEP_GPUS'].split(",")
         os.environ['MASTER_ADDR'] = hostnames[0]
-        os.environ['MASTER_PORT'] = str(_.master_port + int(min(gpu_ids)))
-        print(gpu_ids, os.environ['MASTER_PORT'])
+        os.environ['MASTER_PORT'] = str(_.master_port)
     elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
