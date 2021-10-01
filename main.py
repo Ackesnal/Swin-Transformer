@@ -270,13 +270,11 @@ def validate(config, data_loader, model):
         images = images.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
         
-        
-        with autocast():
-            # compute output
-            output = model(images)
-            # measure accuracy and record loss
-            loss = criterion(output[0], target)
-            acc1, acc5 = accuracy(output[0], target, topk=(1, 5))
+        # compute output
+        output = model(images)
+        # measure accuracy and record loss
+        loss = criterion(output[0], target)
+        acc1, acc5 = accuracy(output[0], target, topk=(1, 5))
 
         acc1 = reduce_tensor(acc1)
         acc5 = reduce_tensor(acc5)
