@@ -149,7 +149,9 @@ def main(config):
         data_loader_train.sampler.set_epoch(epoch)
 
         train_one_epoch(config, model, criteria, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        if ('SLURM_PROCID' in os.environ and int(os.environ['SLURM_PROCID']) == 0) and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
+        elif dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
@@ -266,13 +268,14 @@ def validate(config, data_loader, model):
     for idx, (images, target) in enumerate(data_loader):
         images = images.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
-
-        # compute output
-        output = model(images)
-
-        # measure accuracy and record loss
-        loss = criterion(output[0], target)
-        acc1, acc5 = accuracy(output[0], target, topk=(1, 5))
+        
+        
+        with autocast():
+            # compute output
+            output = model(images)
+            # measure accuracy and record loss
+            loss = criterion(output[0], target)
+            acc1, acc5 = accuracy(output[0], target, topk=(1, 5))
 
         acc1 = reduce_tensor(acc1)
         acc5 = reduce_tensor(acc5)
