@@ -149,9 +149,7 @@ def main(config):
         data_loader_train.sampler.set_epoch(epoch)
 
         train_one_epoch(config, model, criteria, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
-        if ('SLURM_PROCID' in os.environ and int(os.environ['SLURM_PROCID']) == 0) and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
-        elif dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
@@ -215,7 +213,6 @@ def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixu
             softmax = torch.nn.Softmax(dim=1)
             for i in range(4):
                 loss = loss + criteria[i+1](logsoftmax(outputs[i+1]), softmax(outputs[0]/4)) * 0.25"""
-            loss
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
