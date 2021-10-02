@@ -96,8 +96,8 @@ _C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
 _C.TRAIN.BASE_LR = 1e-5
-_C.TRAIN.WARMUP_LR = 1e-8
-_C.TRAIN.MIN_LR = 1e-7
+_C.TRAIN.WARMUP_LR = 1e-7
+_C.TRAIN.MIN_LR = 1e-6
 # Clip gradient norm
 _C.TRAIN.CLIP_GRAD = 5.0
 # Auto resume from latest checkpoint
