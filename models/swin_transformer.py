@@ -154,16 +154,14 @@ class WindowAttention(nn.Module):
             self.softmax = nn.Softmax(dim=-1)
         elif self.mode == 1 or self.mode == 2:
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-            self.attn_drop = nn.Dropout(attn_drop)
+            self.attn_drop = nn.Dropout(attn_drop, inplace=True)
             self.softmax = nn.Softmax(dim=-1)
             self.proj = nn.Linear(dim, dim)
-            self.proj_drop = nn.Dropout(proj_drop)
-            self.norm = nn.LayerNorm(dim)
-            self.activate = nn.GELU()
-        elif self.mode == 3 or self.mode == 4:
-            self.mlp = Mlp(in_features=dim, hidden_features=dim*4, drop=proj_drop)
-            self.norm = nn.LayerNorm(dim)
-            self.activate = nn.GELU()
+            self.proj_drop = nn.Dropout(proj_drop, inplace=True)
+        elif self.mode == 3
+            self.mlp = Mlp(in_features=dim, hidden_features=dim * 3, drop=proj_drop)
+         or self.mode == 4:
+            self.mlp = Mlp(in_features=dim, hidden_features=dim, drop=proj_drop)
             
     def forward(self, x, mask=None):
         """
@@ -247,20 +245,20 @@ class WindowAttention(nn.Module):
             attn = self.attn_drop(attn)
         
             x = (attn @ v).transpose(1, 2).reshape(B_, C, N) 
-            x = self.activate(self.norm(self.proj_drop(self.proj(x))))
+            x = self.proj_drop(self.proj(x))
             x = x.transpose(-2, -1)
             del q,k,v,qkv,attn
             return x
             
         elif self.mode == 3:
             # spatial MLP
-            x = self.activate(self.norm(self.mlp(x)))
+            x = self.mlp(x)
             return x
             
         elif self.mode == 4:
             # channel MLP
             x = x.transpose(-1, -2)
-            x = self.activate(self.norm(self.mlp(x)))
+            x = self.mlp(x)
             x = x.transpose(-1, -2)
             return x
         
@@ -291,19 +289,20 @@ class WindowAttention(nn.Module):
             #  x = (attn @ v)
             flops += self.num_heads * N * N * (self.dim // self.num_heads)
             # x = self.proj(x)
-            # flops += N * self.dim * self.dim 
+            flops += N * self.dim * self.dim 
         elif self.mode == 2:
             # qkv = self.qkv(x)
             flops += N * self.dim * 3 * self.dim
             # attn = (q @ k.transpose(-2, -1))
             flops += self.num_heads * (N // self.num_heads) * self.dim  * (N // self.num_heads)
             #  x = (attn @ v)
-            flops += self.num_heads * (N // self.num_heads) * self.dim  * (N // self.num_heads)
+            flops += self.num_heads * (N // self.num_heads) * (N // self.num_heads) * self.dim  
             # x = self.proj(x)
-            # flops += N * self.dim * self.dim 
-        elif self.mode == 3 or self.mode == 4:
-            flops += N * self.dim * self.dim * 2 * 4 
-            
+            flops += N * self.dim * self.dim 
+        elif self.mode == 3 
+            flops += N * self.dim * self.dim * 2 * 3
+        elif self.mode == 4:
+            flops += N * self.dim * self.dim * 2 
         return flops
 
 
@@ -383,7 +382,7 @@ class SwinTransformerBlock(nn.Module):
         
         elif self.multi_attn:
             # 4 种 multi-channel attention 的 swin transformer
-            # self.norm1 = norm_layer(dim)
+            self.norm1 = norm_layer(dim)
             # self.norm1 = nn.GroupNorm(4, dim)
             # self.norm2 = norm_layer(dim)
             # self.norm2 = nn.GroupNorm(4, dim)
@@ -504,9 +503,10 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            # x = self.norm1(x)
+            x = self.norm1(x)
             x = x.view(B, H, W, C)
             
+            """
             # cyclic shift
             if self.shift_size > 0:
                 shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
@@ -516,11 +516,10 @@ class SwinTransformerBlock(nn.Module):
             """    
             # padding shift
             if self.shift_size > 0:
-                shifted_x = F.pad(x, (self.shift_size, self.window_size - self.shift_size, 
+                shifted_x = F.pad(x.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
                                       self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
             else:
                 shifted_x = x.permute(0, 2, 3, 1)
-            """
             
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
@@ -540,28 +539,30 @@ class SwinTransformerBlock(nn.Module):
                 x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
                 x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
                 x_windows = torch.cat((x_1, x_2, x_3, x_4), dim = 2)
-                
+            
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
-            shifted_x = window_reverse(x_windows, self.window_size, H, W)
+            
             """
+            shifted_x = window_reverse(x_windows, self.window_size, H, W)
+            
+            # reverse cyclic shift
             if self.shift_size > 0:
-                shifted_x = window_reverse(x_windows, self.window_size, H+self.window_size, W+self.window_size)  # B H' W' C
+                shifted_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            """
+            
+            if self.shift_size > 0:
+                shifted_x = window_reverse(x_windows, self.window_size, H + self.window_size, W + self.window_size)  # B H' W' C
             else:
                 shifted_x = window_reverse(x_windows, self.window_size, H, W) # B H W C
-            
             
             # reverse padding shift
             if self.shift_size > 0:
                 shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
-            """
-            # reverse cyclic shift
-            if self.shift_size > 0:
-                shifted_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
             
-            shifted_x = shortcut + shifted_x.reshape(B, H * W, C)
+            shifted_x = shortcut + self.drop_path(self.activate(shifted_x.reshape(B, H * W, C)))
             
             # Shuffle
-            x = self.drop_path(shifted_x.view(B, L, 4, C//4).transpose(-1, -2).contiguous().view(B, L, C))
+            x = shifted_x.view(B, L, 4, C//4).transpose(-1, -2).contiguous().view(B, L, C)
             
             # 1x1 conv
             # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
