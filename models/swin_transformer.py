@@ -159,7 +159,7 @@ class WindowAttention(nn.Module):
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace=True)
         elif self.mode == 3:
-            self.mlp = Mlp(in_features=dim, hidden_features=dim * 3, drop=proj_drop)
+            self.mlp = Mlp(in_features=dim, hidden_features=dim, drop=proj_drop)
         elif self.mode == 4:
             self.mlp = Mlp(in_features=dim, hidden_features=dim, drop=proj_drop)
             
@@ -221,7 +221,7 @@ class WindowAttention(nn.Module):
             attn = self.attn_drop(attn)
         
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-            x = self.activate(self.norm(self.proj_drop(self.proj(x))))
+            x = self.proj_drop(self.proj(x))
             del q,k,v,qkv,attn
             return x
         
@@ -419,7 +419,7 @@ class SwinTransformerBlock(nn.Module):
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             # self.activate = nn.GELU()
             # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
-            """
+            
             if self.shift_size > 0:
                 # calculate attention mask for SSA
                 H, W = self.input_resolution
@@ -455,6 +455,7 @@ class SwinTransformerBlock(nn.Module):
                 attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
             else:
                 attn_mask = None
+            """
             self.register_buffer("attn_mask", attn_mask)
               
     def forward(self, x):
