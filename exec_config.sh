@@ -3,9 +3,9 @@
 #SBATCH -n 1
 #SBATCH --job-name=Ackesnal
 #SBATCH --partition=gpu
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:tesla-smx2:3
-#SBATCH --mem-per-cpu=20G
+#SBATCH --mem-per-cpu=10G
 #SBATCH -o tiny_multi_wd_4unit_10M_300epoch_out.txt
 #SBATCH -e tiny_multi_wd_4unit_10M_300epoch_err.txt
 
