@@ -95,9 +95,9 @@ _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 1e-5
-_C.TRAIN.WARMUP_LR = 1e-7
-_C.TRAIN.MIN_LR = 1e-6
+_C.TRAIN.BASE_LR = 5e-4
+_C.TRAIN.WARMUP_LR = 5e-7
+_C.TRAIN.MIN_LR = 5e-6
 # Clip gradient norm
 _C.TRAIN.CLIP_GRAD = 5.0
 # Auto resume from latest checkpoint
@@ -261,10 +261,10 @@ def update_config(config, args):
             config.MODEL.SWIN_MLP.SAME_ATTN = args.same_attn
             
     # set local rank for distributed training
-    if "SLURM_LOCALID" in os.environ:
+    """if "SLURM_LOCALID" in os.environ:
         config.LOCAL_RANK = int(os.environ["SLURM_LOCALID"])
-    else:
-        config.LOCAL_RANK = args.local_rank
+    else:"""
+    config.LOCAL_RANK = args.local_rank
 
     # output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
