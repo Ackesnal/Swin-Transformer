@@ -13,4 +13,4 @@ module load cuda/10.1.243
 module load gnu7/7.3.0
 module load mvapich2
 
-srun python -m torch.distributed.launch --nproc_per_node 3 main.py --cfg configs/swin_test_10M.yaml --data-path ../BossNAS/data/imagenet/ --batch-size 360 --multi-attn true --output ./output/tiny_multi_wd_4unit_10M_300epoch
+srun python -m torch.distributed.launch --nproc_per_node 3 main.py --cfg configs/swin_test_10M.yaml --data-path ../BossNAS/data/imagenet/ --batch-size 300 --multi-attn true --output ./output/tiny_multi_wd_4unit_10M_300epoch
