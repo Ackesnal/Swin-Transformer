@@ -378,58 +378,24 @@ class SwinTransformerBlock(nn.Module):
         
         
         elif self.multi_attn:
-            # 4 种 multi-channel attention 的 swin transformer
-            
-            self.norm1 = nn.GroupNorm(4, dim)
-            # self.norm2 = nn.GroupNorm(4, dim)
-            
-            if not self.same_attn:
-                spatial_dim = dim // 4
-                channel_dim = int(self.window_size ** 2)
-                self.SSA = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
+            self.norm1 = norm_layer(dim)
+            spatial_dim = dim // 4
+            self.attn_1 = WindowAttention(spatial_dim, window_size=1, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
                                                                        
-                self.CSA = WindowAttention(channel_dim, window_size=dim // num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2)
-                
-                self.SMLP = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
-                
-                self.CMLP = WindowAttention(channel_dim, window_size=dim // num_heads, num_heads=num_heads // 4, qkv_bias=qkv_bias,
-                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
-                                              
-            if self.same_attn:
-                spatial_dim = dim // 4
-                self.attn_1 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
+            self.attn_2 = WindowAttention(spatial_dim, window_size=3, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
                                                                        
-                self.attn_2 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
+            self.attn_3 = WindowAttention(spatial_dim, window_size=5, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
                                                                        
-                self.attn_3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
-                                                                       
-                self.attn_4 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
-                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
+            self.attn_4 = WindowAttention(spatial_dim, window_size=7, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+                                           qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.activate = nn.GELU()
             # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
-            if self.shift_size > 0:
-                # calculate attention mask for SSA
-                H, W = self.input_resolution
-                img_mask = torch.ones((1, H, W, 1))  # 1 H W 1
-                img_mask = F.pad(img_mask.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
-                                      self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)                
-                mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
-                mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
-            else:
-                attn_mask = None
-    
-            self.register_buffer("attn_mask", attn_mask)
               
     def forward(self, x):
         if not self.multi_attn:
@@ -477,56 +443,30 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x.permute(0,2,1)).view(B, C, H, W)
-            
-            # padding shift
-            if self.shift_size > 0:
-                shifted_x = F.pad(x, (self.shift_size, self.window_size - self.shift_size, 
-                                      self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
-            else:
-                shifted_x = x.permute(0, 2, 3, 1)
+            x = self.norm1(x).view(B, H, W, C)
+            x_1 = x[:,:,:,:C//4]
+            x_2 = x[:,:,:,C//4:C//2]
+            x_3 = x[:,:,:,C//2:C*3//4]
+            x_4 = x[:,:,:,C*3//4:]
             
             # partition windows
-            x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-            x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+            x_1 = window_partition(x_1, 1).view(-1, 1 * 1, C//4)  # nW*B, window_size, window_size, C
+            x_2 = window_partition(x_2, 3).view(-1, 3 * 3, C//4)
+            x_3 = window_partition(x_3, 5).view(-1, 5 * 5, C//4)
+            x_4 = window_partition(x_4, 7).view(-1, 7 * 7, C//4)
+            # x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
-            # calculate and merge windows
-            if not self.same_attn:
-                x_ssa = self.SSA(x_windows[:, :, :C//4], self.attn_mask)
-                x_csa = self.CSA(x_windows[:, :, C//4:C//2])
-                x_smlp = self.SMLP(x_windows[:, :, C//2:3*C//4])
-                x_cmlp = self.CMLP(x_windows[:, :, 3*C//4:])
-                """
-                x_ssa = self.SSA(x_windows[:, :, :C//16*(1+self.layer*2)], self.attn_mask)
-                x_csa = self.CSA(x_windows[:, :, C//16*(1+self.layer*2):C//2])
-                x_smlp = self.SMLP(x_windows[:, :, C//2:C//16*(9+self.layer*2)])
-                x_cmlp = self.CMLP(x_windows[:, :, C//16*(9+self.layer*2):])
-                """
-                x_windows = self.activate(torch.cat((x_ssa, x_csa, x_smlp, x_cmlp), dim = 2))
-                
-            elif self.same_attn:
-                x_1 = self.attn_1(x_windows[:, :, :C//4], self.attn_mask)
-                x_2 = self.attn_2(x_windows[:, :, C//4:C//2], self.attn_mask)
-                x_3 = self.attn_3(x_windows[:, :, C//2:3*C//4], self.attn_mask)
-                x_4 = self.attn_4(x_windows[:, :, 3*C//4:], self.attn_mask)
-                torch.cuda.empty_cache()
-                x_windows = torch.cat((x_1, x_2, x_3, x_4), dim = 2)
-                
-            x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
+            # individual self-attntion
+            x_1 = window_reverse(self.attn_1(x_1).view(-1, 1, 1, C//4), 1, H, W)
+            x_2 = window_reverse(self.attn_2(x_2).view(-1, 3, 3, C//4), 3, H, W)
+            x_3 = window_reverse(self.attn_3(x_3).view(-1, 5, 5, C//4), 5, H, W)
+            x_4 = window_reverse(self.attn_4(x_4).view(-1, 7, 7, C//4), 7, H, W)
             
-            if self.shift_size > 0:
-                shifted_x = window_reverse(x_windows, self.window_size, H+self.window_size, W+self.window_size)  # B H' W' C
-            else:
-                shifted_x = window_reverse(x_windows, self.window_size, H, W) # B H W C
-            
-            # reverse padding shift
-            if self.shift_size > 0:
-                shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
-
-            shifted_x = shortcut + shifted_x.reshape(B, H * W, C)
+            # concatenate
+            x = torch.cat((x_1, x_2, x_3, x_4), dim = 3).reshape(B, H * W, C) + shortcut
             
             # Shuffle
-            x = self.drop_path(shifted_x.reshape(B, L, 4, C//4).permute(0,1,3,2).contiguous().view(B, L, C))
+            x = self.drop_path(x.reshape(B, L, 4, C//4).permute(0,1,3,2).contiguous().view(B, L, C))
             
             # 1x1 conv
             # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
