@@ -811,8 +811,6 @@ class SwinTransformer(nn.Module):
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        # self.subhead = nn.Linear(self.num_features//4, num_classes) if num_classes > 0 else nn.Identity()
-        # self.activate = nn.GELU()
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -854,12 +852,8 @@ class SwinTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-        """x0 = x[:, :x.shape[1]//4]
-        x1 = x[:, x.shape[1]//4:x.shape[1]//2]
-        x2 = x[:, x.shape[1]//2:3*x.shape[1]//4]
-        x3 = x[:, 3*x.shape[1]//4:] """
         x = self.head(x)
-        return [x]#, self.subhead(x0), self.subhead(x1), self.subhead(x2), self.subhead(x3)]
+        return [x]
 
     def flops(self):
         flops = 0
