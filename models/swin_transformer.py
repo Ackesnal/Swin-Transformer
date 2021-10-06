@@ -519,7 +519,7 @@ class SwinTransformerBlock(nn.Module):
                 shifted_x = F.pad(x.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
                                       self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
             else:
-                shifted_x = x.permute(0, 2, 3, 1)
+                shifted_x = x
             
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
