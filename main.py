@@ -164,9 +164,10 @@ def main(config):
 
 
 def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
+    torch.autograd.set_detect_anomaly(True)
     model.train()
     optimizer.zero_grad()
-
+    
     num_steps = len(data_loader)
     batch_time = AverageMeter()
     loss_meter = AverageMeter()
@@ -180,7 +181,7 @@ def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixu
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
-
+        
         outputs = model(samples)
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
@@ -327,14 +328,15 @@ if __name__ == '__main__':
         assert amp is not None, "amp not installed!"
 
     
-    if 'SLURM_PROCID' in os.environ:
+    """if 'SLURM_PROCID' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         world_size = int(os.environ['SLURM_NTASKS'])
         hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
         gpu_ids = os.environ['SLURM_STEP_GPUS'].split(",")
         os.environ['MASTER_ADDR'] = hostnames[0]
         os.environ['MASTER_PORT'] = str(_.master_port)
-    elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    el"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
