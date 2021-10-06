@@ -517,18 +517,10 @@ class SwinTransformerBlock(nn.Module):
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
-            if not self.same_attn:
-                flops += nW * self.SSA.flops(self.window_size * self.window_size)
-                flops += nW * self.CSA.flops(self.dim // 4)
-                flops += nW * self.SMLP.flops(self.window_size * self.window_size)
-                flops += nW * self.CMLP.flops(self.dim // 4)
-            elif self.same_attn:
-                flops += nW * self.attn_1.flops(self.window_size * self.window_size)
-                flops += nW * self.attn_2.flops(self.window_size * self.window_size)
-                flops += nW * self.attn_3.flops(self.window_size * self.window_size)
-                flops += nW * self.attn_4.flops(self.window_size * self.window_size)
-            # proj
-            # flops += self.dim * self.dim * H * W
+            flops += nW * self.attn_1.flops(1 * 1)
+            flops += nW * self.attn_2.flops(2 * 2)
+            flops += nW * self.attn_3.flops(5 * 5)
+            flops += nW * self.attn_4.flops(7 * 7)
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # proj
