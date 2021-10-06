@@ -300,7 +300,7 @@ class WindowAttention(nn.Module):
             # x = self.proj(x)
             flops += N * self.dim * self.dim 
         elif self.mode == 3:
-            flops += N * self.dim * self.dim * 2 * 3
+            flops += N * self.dim * self.dim * 2 
         elif self.mode == 4:
             flops += N * self.dim * self.dim * 2 
         return flops
@@ -417,7 +417,7 @@ class SwinTransformerBlock(nn.Module):
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            # self.activate = nn.GELU()
+            self.activate = nn.GELU()
             # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
             if self.shift_size > 0:
