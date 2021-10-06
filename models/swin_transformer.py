@@ -299,7 +299,7 @@ class WindowAttention(nn.Module):
             flops += self.num_heads * (N // self.num_heads) * (N // self.num_heads) * self.dim  
             # x = self.proj(x)
             flops += N * self.dim * self.dim 
-        elif self.mode == 3 
+        elif self.mode == 3:
             flops += N * self.dim * self.dim * 2 * 3
         elif self.mode == 4:
             flops += N * self.dim * self.dim * 2 
@@ -985,7 +985,7 @@ class SwinTransformer(nn.Module):
     def flops(self):
         flops = 0
         flops += self.patch_embed.flops()
-        with open("FLOPS", "a+") as fp:
+        with open("FLOPS", "w+") as fp:
             fp.write("Image embedding FLOPs: " + str(round(flops/1000000,3)) + "M\n\n")
         for i, layer in enumerate(self.layers):
             with open("FLOPS", "a+") as fp:
@@ -996,4 +996,6 @@ class SwinTransformer(nn.Module):
                 fp.write("Block " + str(i) + " total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n\n")
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
+        with open("FLOPS", "a+") as fp:
+            fp.write("Total FLOPs: " + str(round(flops / 1000000000, 3)) + "G\n\n")
         return flops
