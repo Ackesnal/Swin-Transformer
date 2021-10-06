@@ -610,7 +610,7 @@ class SwinTransformerBlock(nn.Module):
         # norm1
         flops += self.dim * H * W
         with open("FLOPS", "a+") as fp:
-                fp.write("\t\tLayerNorm FLOPs:" + str(round(self.dim * H * W / 1000000, 3)) + "M\n")
+                fp.write("\t\tLayerNorm FLOPs: " + str(round(self.dim * H * W / 1000000, 3)) + "M\n")
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
@@ -620,10 +620,10 @@ class SwinTransformerBlock(nn.Module):
                 flops += nW * self.SMLP.flops(self.window_size * self.window_size)
                 flops += nW * self.CMLP.flops(self.dim // 4)
                 with open("FLOPS", "a+") as fp:
-                    fp.write("\t\tSpatial Self-Attention FLOPs:" + str(round(nW * self.SSA.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
-                    fp.write("\t\tChannel Self-Attention FLOPs:" + str(round(nW * self.CSA.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
-                    fp.write("\t\tSpatial MLP FLOPs:" + str(round(nW * self.SMLP.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
-                    fp.write("\t\tChannel MLP FLOPs:" + str(round(nW * self.CMLP.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+                    fp.write("\t\tSpatial Self-Attention FLOPs: " + str(round(nW * self.SSA.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+                    fp.write("\t\tChannel Self-Attention FLOPs: " + str(round(nW * self.CSA.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+                    fp.write("\t\tSpatial MLP FLOPs: " + str(round(nW * self.SMLP.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+                    fp.write("\t\tChannel MLP FLOPs: " + str(round(nW * self.CMLP.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
             elif self.same_attn:
                 flops += nW * self.attn_1.flops(self.window_size * self.window_size)
                 flops += nW * self.attn_2.flops(self.window_size * self.window_size)
@@ -787,14 +787,16 @@ class BasicLayer(nn.Module):
         for blk in self.blocks:
             with open("FLOPS", "a+") as fp:
                 fp.write("\tLayer " + str(layer) + ":\n")
-            flops += blk.flops()
+            tmp = blk.flops()
+            flops += tmp
             with open("FLOPS", "a+") as fp:
-                fp.write("\t\tLayer "+ str(layer) + "total FLOPs:" + str(round(blk.flops() / 1000000, 3)) + "M\n")
+                fp.write("\t\tLayer "+ str(layer) + "total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n")
             layer = layer + 1
         if self.downsample is not None:
-            flops += self.downsample.flops()
+            tmp = self.downsample.flops()
+            flops += tmp
             with open("FLOPS", "a+") as fp:
-                fp.write("\tDownsampling FLOPs: " + str(round(self.downsample.flops() / 1000000, 3)) + "M\n")
+                fp.write("\tDownsampling FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n")
         return flops
 
 
@@ -987,9 +989,10 @@ class SwinTransformer(nn.Module):
         for i, layer in enumerate(self.layers):
             with open("FLOPS", "a+") as fp:
                 fp.write("Block " + str(i) + ":\n")
-            flops += layer.flops()
+            tmp = layer.flops()
+            flops += tmp
             with open("FLOPS", "a+") as fp:
-                fp.write("Block " + str(i) + " total FLOPs: " + str(round(layer.flops() / 1000000, 3)) + "M\n\n")
+                fp.write("Block " + str(i) + " total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n\n")
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
