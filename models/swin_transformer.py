@@ -158,7 +158,7 @@ class WindowAttention(nn.Module):
             self.softmax = nn.Softmax(dim=-1)
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace=True)
-        elif self.mode == 3
+        elif self.mode == 3:
             self.mlp = Mlp(in_features=dim, hidden_features=dim * 3, drop=proj_drop)
          or self.mode == 4:
             self.mlp = Mlp(in_features=dim, hidden_features=dim, drop=proj_drop)
