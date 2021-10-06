@@ -609,6 +609,8 @@ class SwinTransformerBlock(nn.Module):
         H, W = self.input_resolution
         # norm1
         flops += self.dim * H * W
+        with open("FLOPS", "a+") as fp:
+                fp.write("LayerNorm FLOPs:" + str(self.dim * H * W) + "\n")
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
@@ -617,6 +619,11 @@ class SwinTransformerBlock(nn.Module):
                 flops += nW * self.CSA.flops(self.dim // 4)
                 flops += nW * self.SMLP.flops(self.window_size * self.window_size)
                 flops += nW * self.CMLP.flops(self.dim // 4)
+                with open("FLOPS", "a+") as fp:
+                    fp.write("Spatial Self-Attention FLOPs:" + str(nW * self.SSA.flops(self.window_size * self.window_size)) + "\n")
+                    fp.write("Channel Self-Attention FLOPs:" + str(nW * self.CSA.flops(self.window_size * self.window_size)) + "\n")
+                    fp.write("Spatial MLP FLOPs:" + str(nW * self.SMLP.flops(self.window_size * self.window_size)) + "\n")
+                    fp.write("Channel MLP FLOPs:" + str(nW * self.CMLP.flops(self.window_size * self.window_size)) + "\n")
             elif self.same_attn:
                 flops += nW * self.attn_1.flops(self.window_size * self.window_size)
                 flops += nW * self.attn_2.flops(self.window_size * self.window_size)
@@ -630,7 +637,7 @@ class SwinTransformerBlock(nn.Module):
             flops += 2 * self.dim * self.dim * self.mlp_ratio * H * W
         
         # norm2
-        flops += self.dim * H * W
+        # flops += self.dim * H * W
         return flops
 
 
@@ -776,10 +783,18 @@ class BasicLayer(nn.Module):
 
     def flops(self):
         flops = 0
+        layer = 0
         for blk in self.blocks:
+            with open("FLOPS", "a+") as fp:
+                fp.write("Layer " + str(layer) + ":\n")
             flops += blk.flops()
+            with open("FLOPS", "a+") as fp:
+                fp.write("Layer "+ str(layer) + "total FLOPs:" + str(blk.flops()) + "\n")
+            layer = layer + 1
         if self.downsample is not None:
             flops += self.downsample.flops()
+            with open("FLOPS", "a+") as fp:
+                fp.write("Downsampling FLOPs: " + str(self.downsample.flops()) + "\n")
         return flops
 
 
@@ -967,8 +982,14 @@ class SwinTransformer(nn.Module):
     def flops(self):
         flops = 0
         flops += self.patch_embed.flops()
+        with open("FLOPS", "a+") as fp:
+            fp.write("Image embedding FLOPs: " + str(flops) + "\n\n")
         for i, layer in enumerate(self.layers):
+            with open("FLOPS", "a+") as fp:
+                fp.write("Block " + str(i) + ":\n")
             flops += layer.flops()
+            with open("FLOPS", "a+") as fp:
+                fp.write("Block " + str(i) + " total FLOPs: " + str(layer.flops()) + "\n\n")
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
