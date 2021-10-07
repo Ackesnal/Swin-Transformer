@@ -274,14 +274,17 @@ class WindowAttention(nn.Module):
         flops = 0
         
         if self.mode == 0:
-            # qkv = self.qkv(x)
-            flops += N * self.dim * 3 * self.dim
-            # attn = (q @ k.transpose(-2, -1))
-            flops += self.num_heads * N * (self.dim // self.num_heads) * N
-            #  x = (attn @ v)
-            flops += self.num_heads * N * N * (self.dim // self.num_heads)
-            # x = self.proj(x)
-            flops += N * self.dim * self.dim
+            if N == 1:
+                flops += self.dim * self.dim
+            else:
+                # qkv = self.qkv(x)
+                flops += N * self.dim * 3 * self.dim
+                # attn = (q @ k.transpose(-2, -1))
+                flops += self.num_heads * N * (self.dim // self.num_heads) * N
+                #  x = (attn @ v)
+                flops += self.num_heads * N * N * (self.dim // self.num_heads)
+                # x = self.proj(x)
+                flops += N * self.dim * self.dim
         elif self.mode == 1:
             # qkv = self.qkv(x)
             flops += N * self.dim * 3 * self.dim
