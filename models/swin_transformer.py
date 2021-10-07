@@ -146,12 +146,13 @@ class WindowAttention(nn.Module):
             trunc_normal_(self.relative_position_bias_table, std=.02)
         
         if self.mode == 0:
-            self.scale = qk_scale or (dim // num_heads) ** -0.5
-            self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-            self.attn_drop = nn.Dropout(attn_drop, inplace = True)
+            if self.window_size > 1:
+                self.scale = qk_scale or (dim // num_heads) ** -0.5
+                self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+                self.attn_drop = nn.Dropout(attn_drop, inplace = True)
+                self.softmax = nn.Softmax(dim=-1)
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace = True)
-            self.softmax = nn.Softmax(dim=-1)
         elif self.mode == 1 or self.mode == 2:
             self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.attn_drop = nn.Dropout(attn_drop, inplace = True)
@@ -169,28 +170,30 @@ class WindowAttention(nn.Module):
         """
         if self.mode == 0 :
             # 正常的 swin transformer
-            B_, N, C = x.shape
-            qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-            q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-            
-            q = q * self.scale
-            attn = (q @ k.transpose(-2, -1))
-        
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
-            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-            attn = attn + relative_position_bias.unsqueeze(0)
-            
-            if mask is not None:
-                nW = mask.shape[0]
-                attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-                attn = attn.view(-1, self.num_heads, N, N)
-                attn = self.softmax(attn)
-            else:
-                attn = self.softmax(attn)
-            
-            attn = self.attn_drop(attn)
-        
-            x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+            if self.window_size > 1:
+                B_, N, C = x.shape
+                qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+                q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+
+                q = q * self.scale
+                attn = (q @ k.transpose(-2, -1))
+
+                relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
+                relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+                attn = attn + relative_position_bias.unsqueeze(0)
+
+                if mask is not None:
+                    nW = mask.shape[0]
+                    attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+                    attn = attn.view(-1, self.num_heads, N, N)
+                    attn = self.softmax(attn)
+                else:
+                    attn = self.softmax(attn)
+
+                attn = self.attn_drop(attn)
+
+                x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+                
             x = self.proj(x)
             x = self.proj_drop(x)
             return x
