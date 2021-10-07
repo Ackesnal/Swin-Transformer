@@ -105,7 +105,7 @@ class WindowAttention(nn.Module):
         self.num_heads = num_heads
         self.mode = mode
         
-        if self.mode == 0 or self.mode == 1:
+        if (self.mode == 0 or self.mode == 1) and self.window_size > 1:
             self.scale = qk_scale or (dim // num_heads) ** -0.5
             # define a parameter table of relative position bias
             self.relative_position_bias_table = nn.Parameter(
