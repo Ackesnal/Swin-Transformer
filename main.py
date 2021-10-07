@@ -328,11 +328,12 @@ if __name__ == '__main__':
         assert amp is not None, "amp not installed!"
 
     
-    if 'SLURM_PROCID' in os.environ:
+    """if 'SLURM_PROCID' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         world_size = int(os.environ['SLURM_NTASKS'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
-    elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    el"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
