@@ -193,6 +193,7 @@ class WindowAttention(nn.Module):
                 attn = self.attn_drop(attn)
 
                 x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+                del attn, k, q, v
                 
             x = self.proj(x)
             x = self.proj_drop(x)
@@ -384,25 +385,58 @@ class SwinTransformerBlock(nn.Module):
         
         
         elif self.multi_attn:
-            self.norm1 = norm_layer(dim)
-            # self.norm2 = norm_layer(dim)
+            self.norm1 = nn.GroupNorm(4, dim)
+            self.norm2 = norm_layer(dim)
             spatial_dim = dim // 4
-            self.attn_1 = WindowAttention(spatial_dim, window_size=1, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.window_size_1 = min(max(1, min(self.input_resolution) // 1), 28)
+            self.window_size_2 = min(max(1, min(self.input_resolution) // 2), 14)
+            self.window_size_3 = max(1, min(self.input_resolution) // 4)
+            self.window_size_4 = max(1, min(self.input_resolution) // 8)
+            print(self.window_size_1, self.window_size_2, self.window_size_3, self.window_size_4)
+            self.attn_1 = WindowAttention(spatial_dim, window_size=self.window_size_1, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
                                                                        
-            self.attn_2 = WindowAttention(spatial_dim, window_size=3, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.attn_2 = WindowAttention(spatial_dim, window_size=self.window_size_2, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
                                                                        
-            self.attn_3 = WindowAttention(spatial_dim, window_size=5, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.attn_3 = WindowAttention(spatial_dim, window_size=self.window_size_3, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
                                                                        
-            self.attn_4 = WindowAttention(spatial_dim, window_size=7, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            self.attn_4 = WindowAttention(spatial_dim, window_size=self.window_size_4, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                            qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.activate = nn.GELU()
-            # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
+            self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
+            H, W = self.input_resolution
+            H, W = self.input_resolution
+            img_mask = torch.ones((1, H, W, 1))  # 1 H W 1
+                       
+            mask_windows_1 = window_partition(img_mask, self.window_size_1).view(-1, self.window_size_1 * self.window_size_1)  # nW, window_size, window_size, 1
+            mask_windows_2 = window_partition(img_mask, self.window_size_2).view(-1, self.window_size_2 * self.window_size_2)
+            mask_windows_3 = window_partition(img_mask, self.window_size_3).view(-1, self.window_size_3 * self.window_size_3)
+            mask_windows_4 = window_partition(img_mask, self.window_size_4).view(-1, self.window_size_4 * self.window_size_4)
+            
+            attn_mask_1 = mask_windows_1.unsqueeze(1) - mask_windows_1.unsqueeze(2)
+            attn_mask_2 = mask_windows_2.unsqueeze(1) - mask_windows_2.unsqueeze(2)
+            attn_mask_3 = mask_windows_3.unsqueeze(1) - mask_windows_3.unsqueeze(2)
+            attn_mask_4 = mask_windows_4.unsqueeze(1) - mask_windows_4.unsqueeze(2)
+            
+            attn_mask_1 = attn_mask_1.masked_fill(attn_mask_1 != 0, float(-10000.0)).masked_fill(attn_mask_1 == 0, float(0.0))
+            attn_mask_2 = attn_mask_2.masked_fill(attn_mask_2 != 0, float(-10000.0)).masked_fill(attn_mask_2 == 0, float(0.0))
+            attn_mask_3 = attn_mask_3.masked_fill(attn_mask_3 != 0, float(-10000.0)).masked_fill(attn_mask_3 == 0, float(0.0))
+            attn_mask_4 = attn_mask_4.masked_fill(attn_mask_4 != 0, float(-10000.0)).masked_fill(attn_mask_4 == 0, float(0.0))
+            
+            self.register_buffer("attn_mask_1", attn_mask_1)
+            self.register_buffer("attn_mask_2", attn_mask_2)
+            self.register_buffer("attn_mask_3", attn_mask_3)
+            self.register_buffer("attn_mask_4", attn_mask_4)
+            
+            self.attn_mask_1.requires_grad = False
+            self.attn_mask_2.requires_grad = False
+            self.attn_mask_3.requires_grad = False
+            self.attn_mask_4.requires_grad = False
               
     def forward(self, x):
         if not self.multi_attn:
@@ -450,32 +484,32 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x).view(B, H, W, C)
+            x = self.norm1(x.transpose(1,2)).transpose(2,1).view(B, H, W, C)
             x_1 = x[:,:,:,:C//4]
             x_2 = x[:,:,:,C//4:C//2]
             x_3 = x[:,:,:,C//2:C*3//4]
             x_4 = x[:,:,:,C*3//4:]
             
             # partition windows
-            x_1 = window_partition(x_1, 1).view(-1, 1 * 1, C//4)  # nW*B, window_size, window_size, C
-            x_2 = window_partition(x_2, 3).view(-1, 3 * 3, C//4)
-            x_3 = window_partition(x_3, 5).view(-1, 5 * 5, C//4)
-            x_4 = window_partition(x_4, 7).view(-1, 7 * 7, C//4)
+            x_1 = window_partition(x_1, self.window_size_1).view(-1, self.window_size_1 * self.window_size_1, C//4)  # nW*B, window_size, window_size, C
+            x_2 = window_partition(x_2, self.window_size_2).view(-1, self.window_size_2 * self.window_size_2, C//4)
+            x_3 = window_partition(x_3, self.window_size_3).view(-1, self.window_size_3 * self.window_size_3, C//4)
+            x_4 = window_partition(x_4, self.window_size_4).view(-1, self.window_size_4 * self.window_size_4, C//4)
             
             # individual self-attntion
-            x_1 = window_reverse(self.attn_1(x_1).view(-1, 1, 1, C//4), 1, H, W)
-            x_2 = window_reverse(self.attn_2(x_2).view(-1, 3, 3, C//4), 3, H, W)
-            x_3 = window_reverse(self.attn_3(x_3).view(-1, 5, 5, C//4), 5, H, W)
-            x_4 = window_reverse(self.attn_4(x_4).view(-1, 7, 7, C//4), 7, H, W)
+            x_1 = window_reverse(self.attn_1(x_1, self.attn_mask_1).view(-1, self.window_size_1, self.window_size_1, C//4), self.window_size_1, H, W)
+            x_2 = window_reverse(self.attn_2(x_2, self.attn_mask_2).view(-1, self.window_size_2, self.window_size_2, C//4), self.window_size_2, H, W)
+            x_3 = window_reverse(self.attn_3(x_3, self.attn_mask_3).view(-1, self.window_size_3, self.window_size_3, C//4), self.window_size_3, H, W)
+            x_4 = window_reverse(self.attn_4(x_4, self.attn_mask_4).view(-1, self.window_size_4, self.window_size_4, C//4), self.window_size_4, H, W)
             
             # concatenate
-            x = self.drop_path(self.activate(torch.cat((x_1, x_2, x_3, x_4), dim = 3).reshape(B, H * W, C))) + shortcut
+            # x = self.drop_path(self.activate(torch.cat((x_1, x_2, x_3, x_4), dim = 3).reshape(B, H * W, C))) + shortcut
             
             # Shuffle
-            x = x.reshape(B, L, 4, C//4).permute(0,1,3,2).contiguous().view(B, L, C)
+            # x = x.reshape(B, L, 4, C//4).permute(0,1,3,2).contiguous().view(B, L, C)
             
             # 1x1 conv
-            # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
+            x = shortcut + self.drop_path(self.activate(self.proj(self.norm2(torch.cat((x_1, x_2, x_3, x_4), dim = 3).view(B, H * W, C)).transpose(1,2)).transpose(1,2)))
             
             # MLP
             # x = x + self.drop_path(self.mlp(self.norm2(x)))
@@ -523,10 +557,10 @@ class SwinTransformerBlock(nn.Module):
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
-            flops += H * W / 1 / 1 * self.attn_1.flops(1 * 1)
-            flops += H * W / 3 / 3 * self.attn_2.flops(3 * 3)
-            flops += H * W / 5 / 5 * self.attn_3.flops(5 * 5)
-            flops += H * W / 7 / 7 * self.attn_4.flops(7 * 7)
+            flops += H * W / self.window_size_1 / self.window_size_1 * self.attn_1.flops(self.window_size_1 * self.window_size_1)
+            flops += H * W / self.window_size_2 / self.window_size_2 * self.attn_2.flops(self.window_size_2 * self.window_size_2)
+            flops += H * W / self.window_size_3 / self.window_size_3 * self.attn_3.flops(self.window_size_3 * self.window_size_3)
+            flops += H * W / self.window_size_4 / self.window_size_4 * self.attn_4.flops(self.window_size_4 * self.window_size_4)
         else:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # proj
