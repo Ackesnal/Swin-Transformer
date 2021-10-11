@@ -20,7 +20,7 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
         self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        self.drop = nn.Dropout(drop, inplace = True)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -159,9 +159,9 @@ class WindowAttention(nn.Module):
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace=True)
         elif self.mode == 3:
-            self.mlp = Mlp(in_features=dim, hidden_features=dim, drop=proj_drop)
+            self.mlp = Mlp(in_features= self.dim // self.num_heads, hidden_features= self.dim // self.num_heads * 3, drop=proj_drop)
         elif self.mode == 4:
-            self.mlp = Mlp(in_features=dim, hidden_features=dim, drop=proj_drop)
+            self.mlp = Mlp(in_features=dim, hidden_features=dim * 3, drop=proj_drop)
             
     def forward(self, x, mask=None):
         """
@@ -252,7 +252,10 @@ class WindowAttention(nn.Module):
             
         elif self.mode == 3:
             # spatial MLP
+            B_, N, C = x.shape
+            x = x.reshape(B_, N, self.num_heads, C//self.num_heads).permute(0, 2, 1, 3)
             x = self.mlp(x)
+            x = x.permute(0, 2, 1, 3).reshape(B_, N, C)
             return x
             
         elif self.mode == 4:
@@ -300,7 +303,7 @@ class WindowAttention(nn.Module):
             # x = self.proj(x)
             flops += N * self.dim * self.dim 
         elif self.mode == 3:
-            flops += N * self.dim * self.dim * 2 
+            flops += self.num_heads * N * (self.dim // self.num_heads) * (self.dim // self.num_heads) * 3 * 2 
         elif self.mode == 4:
             flops += N * self.dim * self.dim * 2 
         return flops
@@ -382,8 +385,8 @@ class SwinTransformerBlock(nn.Module):
         
         elif self.multi_attn:
             # 4 种 multi-channel attention 的 swin transformer
-            self.norm1 = norm_layer(dim)
-            # self.norm1 = nn.GroupNorm(4, dim)
+            # self.norm1 = norm_layer(dim)
+            self.norm1 = nn.GroupNorm(4, dim)
             # self.norm2 = norm_layer(dim)
             # self.norm2 = nn.GroupNorm(4, dim)
             
@@ -504,7 +507,7 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x)
+            x = self.norm1(x.permute(0,2,1)).permute(0,2,1)
             x = x.view(B, H, W, C)
             
             """
