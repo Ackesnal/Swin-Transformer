@@ -159,9 +159,9 @@ class WindowAttention(nn.Module):
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace=True)
         elif self.mode == 3:
-            self.mlp = Mlp(in_features= self.dim // self.num_heads, hidden_features= self.dim // self.num_heads * 3, drop=proj_drop)
+            self.mlp = Mlp(in_features= self.dim, hidden_features= self.dim * 3, drop=proj_drop)
         elif self.mode == 4:
-            self.mlp = Mlp(in_features=dim, hidden_features=dim * 3, drop=proj_drop)
+            self.mlp = Mlp(in_features= self.dim, hidden_features= self.dim, drop=proj_drop)
             
     def forward(self, x, mask=None):
         """
@@ -252,10 +252,7 @@ class WindowAttention(nn.Module):
             
         elif self.mode == 3:
             # spatial MLP
-            B_, N, C = x.shape
-            x = x.reshape(B_, N, self.num_heads, C//self.num_heads).permute(0, 2, 1, 3)
             x = self.mlp(x)
-            x = x.permute(0, 2, 1, 3).reshape(B_, N, C)
             return x
             
         elif self.mode == 4:
@@ -303,7 +300,7 @@ class WindowAttention(nn.Module):
             # x = self.proj(x)
             flops += N * self.dim * self.dim 
         elif self.mode == 3:
-            flops += self.num_heads * N * (self.dim // self.num_heads) * (self.dim // self.num_heads) * 3 * 2 
+            flops += N * self.dim * self.dim * 3 * 2 
         elif self.mode == 4:
             flops += N * self.dim * self.dim * 2 
         return flops
@@ -507,7 +504,7 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x.permute(0,2,1)).permute(0,2,1)
+            x = self.norm1(x.transpose(1, 2)).transpose(1, 2).contiguous()
             x = x.view(B, H, W, C)
             
             """
