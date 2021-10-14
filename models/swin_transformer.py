@@ -177,7 +177,7 @@ class WindowAttention(nn.Module):
             
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
-        
+            
             relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(int(self.window_size**2), int(self.window_size**2), -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn = attn + relative_position_bias.unsqueeze(0)
@@ -189,6 +189,8 @@ class WindowAttention(nn.Module):
                 attn = self.softmax(attn)
             else:
                 attn = self.softmax(attn)
+            
+            print(attn[0, 0, :])
             
             attn = self.attn_drop(attn)
         
@@ -479,6 +481,10 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
     
             # W-MSA/SW-MSA
+            if self.shift_size > 0:
+                print("Shifted")
+            else:
+                print("Non-shifted")
             attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
                 
             # merge windows
