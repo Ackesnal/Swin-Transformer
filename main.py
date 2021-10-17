@@ -164,7 +164,6 @@ def main(config):
 
 
 def train_one_epoch(config, model, criteria, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
-    torch.autograd.set_detect_anomaly(True)
     model.train()
     optimizer.zero_grad()
     
