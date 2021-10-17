@@ -203,7 +203,6 @@ class WindowAttention(nn.Module):
         
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
             x = self.proj_drop(self.proj(self.act(x)))
-            del q,k,v,qkv,attn
             return x
         
         elif self.mode == 2:
@@ -224,7 +223,6 @@ class WindowAttention(nn.Module):
         
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C) 
             x = self.proj_drop(self.proj(self.act(x)))
-            del q,k,v,qkv,attn
             return x
             
         elif self.mode == 3:
