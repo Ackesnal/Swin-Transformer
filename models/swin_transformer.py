@@ -214,12 +214,12 @@ class WindowAttention(nn.Module):
             attn = self.attn.expand(nW, -1, -1, -1) # nW, C/H, N, N
             
             if mask is not None:
-                nW = mask.shape[0]
-                attn = attn.view(nW, self.dim // self.num_heads, N, N) + mask.unsqueeze(1) # nW, C/H, N, N
+                attn = attn + mask.unsqueeze(1) # nW, C/H, N, N
             
             attn = self.softmax(attn)
             attn = self.attn_drop(attn)
-        
+            
+            print(v.shape, attn.shape)
             x = (attn @ v).squeeze().permute(0, 2, 4, 1, 3).view(B_, N, C)
             x = self.proj_drop(self.proj(x))
             return x
