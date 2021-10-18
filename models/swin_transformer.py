@@ -209,7 +209,7 @@ class WindowAttention(nn.Module):
             # channel attention
             B_, N, C = x.shape
             
-            v = self.v(x).reshape(B_ // nW, nW, N, self.num_heads, C // self.num_heads).permute(0, 3, 1, 4, 2).unsqueeze(-1) # B, H, nW, C/H, N, 1
+            v = self.v(x).view(B_ // nW, nW, N, self.num_heads, C // self.num_heads).permute(0, 3, 1, 4, 2).unsqueeze(-1) # B, H, nW, C/H, N, 1
             
             attn = self.attn.expand(nW, -1, -1, -1) # nW, C/H, N, N
             
