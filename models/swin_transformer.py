@@ -135,7 +135,7 @@ class WindowAttention(nn.Module):
         elif self.mode == 2:
             self.v = nn.Linear(dim, dim, bias=qkv_bias)
             N = self.window_size ** 2
-            self.attn = nn.Parameter(torch.randn(1, 1, self.num_heads, N, N))
+            self.attn = nn.Parameter(torch.randn(1, 1, 1, self.dim // self.num_heads, N, N))
             self.attn_drop = nn.Dropout(attn_drop, inplace=True)
             self.softmax = nn.Softmax(dim=-1)
             self.proj = nn.Linear(dim, dim)
@@ -202,27 +202,27 @@ class WindowAttention(nn.Module):
             attn = self.attn_drop(attn)
         
             x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-            x = self.proj_drop(self.proj(self.act(x)))
+            x = self.proj_drop(self.proj(x))
             return x
         
         elif self.mode == 2:
             # channel attention
             B_, N, C = x.shape
             
-            v = self.v(x).reshape(B_, N, self.num_heads, C//self.num_heads).permute(0, 2, 1, 3)
+            v = self.v(x).permute(0, 2, 1).unsqueeze(-1) # B_, C, N, 1
             
-            attn = self.attn.expand(B_ // nW, nW, -1, -1, -1)
+            attn = self.attn.expand(B_, self.num_heads, -1, -1, -1)
             
             if mask is not None:
                 nW = mask.shape[0]
-                attn = attn + mask.unsqueeze(1).unsqueeze(0)
+                attn = attn.view(B_ // nW, nW, self.dim, N, N) + mask.unsqueeze(1).unsqueeze(0)
             
-            attn = attn.view(-1, self.num_heads, N, N)
+            attn = attn.view(B_, self.dim, N, N) # B_, C, N, N
             attn = self.softmax(attn)
             attn = self.attn_drop(attn)
         
-            x = (attn @ v).transpose(1, 2).reshape(B_, N, C) 
-            x = self.proj_drop(self.proj(self.act(x)))
+            x = (attn @ v).squeeze().permute(0, 2, 1)
+            x = self.proj_drop(self.proj(x))
             return x
             
         elif self.mode == 3:
