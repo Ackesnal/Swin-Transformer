@@ -220,7 +220,7 @@ class WindowAttention(nn.Module):
             attn = self.attn_drop(attn)
             
             print(v.shape, attn.shape)
-            x = (attn @ v).squeeze(5).permute(0, 2, 4, 1, 3).view(B_, N, C)
+            x = (attn @ v).squeeze(5).permute(0, 2, 4, 1, 3).contiguous().view(B_, N, C)
             x = self.proj_drop(self.proj(x))
             return x
             
