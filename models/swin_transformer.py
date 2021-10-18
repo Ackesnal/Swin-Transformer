@@ -353,8 +353,8 @@ class SwinTransformerBlock(nn.Module):
         
         elif self.multi_attn:
             # 4 种 multi-channel attention 的 swin transformer
-            # self.norm1 = norm_layer(dim)
-            self.norm1 = nn.GroupNorm(3, dim)
+            self.norm1 = norm_layer(dim)
+            # self.norm1 = nn.GroupNorm(3, dim)
             # self.norm2 = norm_layer(dim)
             # self.norm2 = nn.GroupNorm(4, dim)
             
@@ -442,7 +442,7 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x.transpose(1, 2)).transpose(1, 2).contiguous()
+            x = self.norm1(x)#.transpose(1, 2)).transpose(1, 2).contiguous()
             x = x.view(B, H, W, C)
             
             # cyclic shift
