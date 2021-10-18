@@ -135,7 +135,7 @@ class WindowAttention(nn.Module):
         elif self.mode == 2:
             self.v = nn.Linear(dim, dim, bias=qkv_bias)
             N = self.window_size ** 2
-            self.attn = nn.Parameter(torch.randn(1, 1, 1, self.dim // self.num_heads, N, N))
+            self.attn = nn.Parameter(torch.randn(1, 1, self.dim // self.num_heads, N, N))
             self.attn_drop = nn.Dropout(attn_drop, inplace=True)
             self.softmax = nn.Softmax(dim=-1)
             self.proj = nn.Linear(dim, dim)
