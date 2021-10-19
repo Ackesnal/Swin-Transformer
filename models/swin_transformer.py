@@ -213,12 +213,6 @@ class WindowAttention(nn.Module):
             
             attn = self.attn.expand(nW, -1, -1, -1) # nW, C/H, N, N
             
-            if mask is not None:
-                attn = attn + mask.unsqueeze(1) # nW, C/H, N, N
-            
-            attn = self.softmax(attn)
-            attn = self.attn_drop(attn)
-            
             x = (attn @ v).squeeze(5).permute(0, 2, 4, 1, 3).contiguous().view(B_, N, C)
             x = self.proj_drop(self.proj(x))
             return x
@@ -353,8 +347,8 @@ class SwinTransformerBlock(nn.Module):
         
         elif self.multi_attn:
             # 4 种 multi-channel attention 的 swin transformer
-            self.norm1 = norm_layer(dim)
-            # self.norm1 = nn.GroupNorm(3, dim)
+            # self.norm1 = norm_layer(dim)
+            self.norm1 = nn.GroupNorm(3, dim)
             # self.norm2 = norm_layer(dim)
             # self.norm2 = nn.GroupNorm(4, dim)
             
@@ -369,9 +363,10 @@ class SwinTransformerBlock(nn.Module):
                                        qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+            self.activate = nn.GELU()
             # self.proj = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
             
-            if self.shift_size > 0:
+            """if self.shift_size > 0:
                 # calculate attention mask for SW-MSA
                 H, W = self.input_resolution
                 img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
@@ -387,6 +382,19 @@ class SwinTransformerBlock(nn.Module):
                         img_mask[:, h, w, :] = cnt
                         cnt += 1
     
+                mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+                mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
+            else:
+                attn_mask = None"""
+                
+            if self.shift_size > 0:
+                # calculate attention mask for SSA
+                H, W = self.input_resolution
+                img_mask = torch.ones((1, H, W, 1))  # 1 H W 1
+                img_mask = F.pad(img_mask.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
+                                      self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)                
                 mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
                 mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
                 attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
@@ -442,12 +450,19 @@ class SwinTransformerBlock(nn.Module):
             assert L == H * W, "input feature has wrong size"
     
             shortcut = x
-            x = self.norm1(x)#.transpose(1, 2)).transpose(1, 2).contiguous()
+            x = self.norm1(x.transpose(1, 2)).transpose(1, 2).contiguous()
             x = x.view(B, H, W, C)
             
-            # cyclic shift
+            """# cyclic shift
             if self.shift_size > 0:
                 shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            else:
+                shifted_x = x"""
+                
+            # padding shift
+            if self.shift_size > 0:
+                shifted_x = F.pad(x.permute(0, 3, 1, 2), (self.shift_size, self.window_size - self.shift_size, 
+                                      self.shift_size, self.window_size - self.shift_size), "constant", 0).permute(0, 2, 3, 1)
             else:
                 shifted_x = x
                         
@@ -456,13 +471,24 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # calculate and concat windows
-            x_msa = self.MSA(x_windows[:, :, :C//3], mask = self.attn_mask, nW = H // self.window_size * W // self.window_size)
-            x_dwc = self.DWC(x_windows[:, :, C//3:C*2//3], mask = self.attn_mask, nW = H // self.window_size * W // self.window_size)
+            x_msa = self.MSA(x_windows[:, :, :C//3], mask = self.attn_mask)
+            x_dwc = self.DWC(x_windows[:, :, C//3:C*2//3], nW = H // self.window_size * W // self.window_size)
             x_mlp = self.MLP(x_windows[:, :, C*2//3:])
             x_windows = torch.cat((x_msa, x_dwc, x_mlp), dim = 2)
             
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
+            
+            if self.shift_size > 0:
+                shifted_x = window_reverse(x_windows, self.window_size, H + self.window_size, W + self.window_size)  # B H' W' C
+            else:
+                shifted_x = window_reverse(x_windows, self.window_size, H, W) # B H W C
+            
+            # reverse padding shift
+            if self.shift_size > 0:
+                shifted_x = shifted_x[:, self.shift_size:-(self.window_size-self.shift_size), self.shift_size:-(self.window_size-self.shift_size), :] # B H W C
+            
+            """
             # merge windows
             shifted_x = window_reverse(x_windows , self.window_size, H, W)  # B H' W' C
             
@@ -471,12 +497,13 @@ class SwinTransformerBlock(nn.Module):
                 x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
             else:
                 x = shifted_x
-            x = x.view(B, H * W, C)
+            """
+            x = x.reshape(B, H * W, C)
             
-            x = shortcut + self.drop_path(x)
+            x = shortcut + self.drop_path(self.activate(x))
             
             # Shuffle
-            x = shifted_x.view(B, L, 3, C//3).transpose(-1, -2).contiguous().view(B, L, C)
+            x = shifted_x.contiguous().view(B, L, 3, C//3).transpose(-1, -2).contiguous().view(B, L, C)
             
             # 1x1 conv
             # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
