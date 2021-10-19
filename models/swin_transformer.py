@@ -131,16 +131,12 @@ class WindowAttention(nn.Module):
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace = True)
             self.softmax = nn.Softmax(dim=-1)
-            self.act = nn.GELU()
         elif self.mode == 2:
             self.v = nn.Linear(dim, dim, bias=qkv_bias)
             N = self.window_size ** 2
-            self.attn = nn.Parameter(torch.randn(1, self.dim // self.num_heads, N, N))
-            self.attn_drop = nn.Dropout(attn_drop, inplace=True)
-            self.softmax = nn.Softmax(dim=-1)
+            self.attn = nn.Linear(N, N * self.num_heads)
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace=True)
-            self.act = nn.GELU()
         elif self.mode == 3 or self.mode == 4:
             self.mlp = Mlp(in_features = self.dim, hidden_features = self.dim, drop=proj_drop)
             
@@ -209,11 +205,12 @@ class WindowAttention(nn.Module):
             # channel attention
             B_, N, C = x.shape
             
-            v = self.v(x).view(B_ // nW, nW, N, self.num_heads, C // self.num_heads).permute(0, 3, 1, 4, 2).unsqueeze(-1) # B, H, nW, C/H, N, 1
+            v = self.v(x) # B_, N, C
+            v = self.attn(v.permute(0,2,1)) # B_, C, N*H
+            v = v.reshape(B_, self.num_heads, C//self.num_heads, self.num_heads, N).permute(0,1,3,2,4) # B_, H, H, C/H, N
             
-            attn = self.attn.expand(nW, -1, -1, -1) # nW, C/H, N, N
-            
-            x = (attn @ v).squeeze(5).permute(0, 2, 4, 1, 3).contiguous().view(B_, N, C)
+            x = v.reshape(B_, self.num_heads * self.num_heads, C//self.num_heads, N)[:, 0::self.num_heads, :, :] # B_, H, C/H, N
+            x = x.reshape(B_, C, N).perumte(0,2,1) # B_, N, C
             x = self.proj_drop(self.proj(x))
             return x
             
