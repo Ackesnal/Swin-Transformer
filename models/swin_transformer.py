@@ -469,11 +469,7 @@ class SwinTransformerBlock(nn.Module):
             
             # calculate and concat windows
             x_msa = self.MSA(x_windows[:, :, :C//3], mask = self.attn_mask)
-            if self.shift_size > 0:
-                nW = (H // self.window_size + 1) * (W // self.window_size + 1)
-            else:
-                nW = H // self.window_size * W // self.window_size
-            x_dwc = self.DWC(x_windows[:, :, C//3:C*2//3], nW = nW)
+            x_dwc = self.DWC(x_windows[:, :, C//3:C*2//3])
             x_mlp = self.MLP(x_windows[:, :, C*2//3:])
             x_windows = torch.cat((x_msa, x_dwc, x_mlp), dim = 2)
             
