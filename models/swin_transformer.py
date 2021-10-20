@@ -209,7 +209,7 @@ class WindowAttention(nn.Module):
             v = self.attn(v.permute(0,2,1)) # B_, C, N*H
             v = v.reshape(B_, self.num_heads, C//self.num_heads, self.num_heads, N).permute(0,1,3,2,4) # B_, H, H, C/H, N
             
-            x = v.reshape(B_, self.num_heads * self.num_heads, C//self.num_heads, N)[:, 0::self.num_heads, :, :] # B_, H, C/H, N
+            x = v.reshape(B_, self.num_heads * self.num_heads, C//self.num_heads, N)[:, 0::self.num_heads+1, :, :] # B_, H, C/H, N
             x = x.reshape(B_, C, N).permute(0,2,1) # B_, N, C
             x = self.proj_drop(self.proj(x))
             return x
