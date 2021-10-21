@@ -4,13 +4,13 @@
 #SBATCH --job-name=Ackesnal
 #SBATCH --partition=gpu
 #SBATCH --cpus-per-task=10
-#SBATCH --gres=gpu:tesla-smx2:2
+#SBATCH --gres=gpu:tesla-smx2:4
 #SBATCH --mem-per-cpu=10G
-#SBATCH -o tiny_multi_attn_4unit_7M_edited_300epoch_out.txt
-#SBATCH -e tiny_multi_attn_4unit_7M_edited_300epoch_err.txt
+#SBATCH -o tiny_multi_attn_4unit_edited_7M_edited_300epoch_out.txt
+#SBATCH -e tiny_multi_attn_4unit_edited_7M_edited_300epoch_err.txt
 
 module load cuda/10.1.243
 module load gnu7/7.3.0
 module load mvapich2
 
-srun python -m torch.distributed.launch --nproc_per_node=2 main.py --cfg configs/swin_test_7M.yaml --data-path ../BossNAS/data/imagenet/ --batch-size 512 --multi-attn true --output ./output/tiny_multi_attn_4unit_7M_edited_300epoch --use-checkpoint
+srun python -m torch.distributed.launch --nproc_per_node=4 --master_port=34568 main.py --cfg configs/swin_test_7M.yaml --data-path ../BossNAS/data/imagenet/ --batch-size 512 --multi-attn true --output ./output/tiny_multi_attn_4unit_7M_edited_new_300epoch --use-checkpoint

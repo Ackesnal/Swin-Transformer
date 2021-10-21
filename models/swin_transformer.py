@@ -159,9 +159,9 @@ class WindowAttention(nn.Module):
             self.proj = nn.Linear(dim, dim)
             self.proj_drop = nn.Dropout(proj_drop, inplace=True)
         elif self.mode == 3:
-            self.mlp = Mlp(in_features= self.dim, hidden_features= self.dim * 3, drop=proj_drop)
+            self.mlp = Mlp(in_features= self.dim, hidden_features= self.dim * 2, drop=proj_drop)
         elif self.mode == 4:
-            self.mlp = Mlp(in_features= self.dim, hidden_features= self.dim, drop=proj_drop)
+            self.mlp = Mlp(in_features= self.dim, hidden_features= self.dim * 2, drop=proj_drop)
             
     def forward(self, x, mask=None):
         """
@@ -569,7 +569,8 @@ class SwinTransformerBlock(nn.Module):
             shifted_x = shortcut + self.drop_path(self.activate(shifted_x.reshape(B, H * W, C)))
             
             # Shuffle
-            x = shifted_x.view(B, L, 4, C//4).transpose(-1, -2).contiguous().view(B, L, C)
+            
+            x = torch.cat((shifted_x[:, :, 0::4], shifted_x[:, :, 1::4], shifted_x[:, :, 2::4], shifted_x[:, :, 3::4]), dim = 2)# shifted_x.view(B, L, 4, C//4).transpose(-1, -2).contiguous().view(B, L, C)
             
             # 1x1 conv
             # x = shifted_x + self.drop_path(self.activate(self.proj(self.norm2(shifted_x.permute(0,2,1))).permute(0, 2, 1)))
