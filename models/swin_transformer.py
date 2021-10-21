@@ -409,7 +409,7 @@ class SwinTransformerBlock(nn.Module):
                                          qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2, nW = nW)
                 
             self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
-                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
+                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
                                          
             """self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
                                          qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)"""
@@ -525,10 +525,10 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # calculate and concat windows
-            x_msa = self.attn1(x_windows[:, :, :C//3], mask = self.attn_mask)
-            x_dwc = self.attn2(x_windows[:, :, C//3:C*2//3])
-            x_mlp = self.attn3(x_windows[:, :, C*2//3:])
-            x_windows = torch.cat((x_msa, x_dwc, x_mlp), dim = 2)
+            x_1 = self.attn1(x_windows[:, :, :C//3], mask = self.attn_mask)
+            x_2 = self.attn2(x_windows[:, :, C//3:C*2//3])
+            x_3 = self.attn3(x_windows[:, :, C*2//3:])
+            x_windows = torch.cat((x_1, x_2, x_3), dim = 2)
             
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
