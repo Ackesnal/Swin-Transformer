@@ -406,13 +406,13 @@ class SwinTransformerBlock(nn.Module):
                                          qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
                                                                        
             self.attn2 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
-                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2, nW = nW)
+                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2)
                 
-            self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
-                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)
-                                         
-            """self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+            """self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
                                          qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)"""
+                                         
+            self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 4, qkv_bias=qkv_bias, 
+                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4, nW = nW)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.activate = nn.GELU()
