@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import random
+import os
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -167,7 +168,7 @@ class WindowAttention(nn.Module):
             self.proj_drop = nn.Dropout(proj_drop, inplace = True)
             self.softmax = nn.Softmax(dim=-1)
             
-    def forward(self, x, mask = None, nW = 0):
+    def forward(self, x, mask = None):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
@@ -249,18 +250,18 @@ class WindowAttention(nn.Module):
             qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
             q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # B_, H, N, C/H
             
-            q = q.reshape(B_ // nW, nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
-            k = q.reshape(B_ // nW, nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
+            q = q.reshape(B_ // self.nW, self.nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
+            k = q.reshape(B_ // self.nW, self.nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
             
             attn = q @ k.transpose(-1, -2) * self.scale # B_ / nW, H, nW, nW
             
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(nW, nW, -1)  # nW, nW, H
+            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(self.nW, self.nW, -1)  # nW, nW, H
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # H, nW, nW
             attn = attn + relative_position_bias.unsqueeze(0)
             
             attn = self.softmax(attn) # B_ / nW, H, nW, nW
             
-            v = (attn @ v.reshape(B_ // nW, nW, self.num_heads, N * C // self.num_heads).transpose(1,2)).transpose(1,2) # B_ / nW, nW, H, N*C/H
+            v = (attn @ v.reshape(B_ // self.nW, self.nW, self.num_heads, N * C // self.num_heads).transpose(1,2)).transpose(1,2) # B_ / nW, nW, H, N*C/H
             v = v.reshape(B_, self.num_heads, N, C // self.num_heads).transpose(1,2).reshape(B_, N, C)
             
             x = self.proj_drop(self.proj(v))
@@ -608,18 +609,20 @@ class SwinTransformerBlock(nn.Module):
         H, W = self.input_resolution
         # norm1
         flops += self.dim * H * W
-        with open("FLOPS", "a+") as fp:
-                fp.write("\t\tLayerNorm FLOPs: " + str(round(self.dim * H * W / 1000000, 3)) + "M\n")
+        if os.environ["LOCAL_RANK"] == 0:
+            with open("FLOPS", "a+") as fp:
+                    fp.write("\t\tLayerNorm FLOPs: " + str(round(self.dim * H * W / 1000000, 3)) + "M\n")
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         if self.multi_attn:
             flops += nW * self.attn1.flops(self.window_size * self.window_size)
             flops += nW * self.attn2.flops(self.window_size * self.window_size)
             flops += nW * self.attn3.flops(self.window_size * self.window_size)
-            with open("FLOPS", "a+") as fp:
-                fp.write("\t\tDynamic attention unit FLOPs: " + str(round(nW * self.attn1.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
-                fp.write("\t\tStatic attention unit FLOPs: " + str(round(nW * self.attn2.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
-                fp.write("\t\tNo attention unit FLOPs: " + str(round(nW * self.attn3.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+            if os.environ["LOCAL_RANK"] == 0:
+                with open("FLOPS", "a+") as fp:
+                    fp.write("\t\tDynamic attention unit FLOPs: " + str(round(nW * self.attn1.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+                    fp.write("\t\tStatic attention unit FLOPs: " + str(round(nW * self.attn2.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
+                    fp.write("\t\tNo attention unit FLOPs: " + str(round(nW * self.attn3.flops(self.window_size * self.window_size) / 1000000, 3)) + "M\n")
             # proj
             # flops += self.dim * self.dim * H * W
         else:
@@ -776,18 +779,21 @@ class BasicLayer(nn.Module):
         flops = 0
         layer = 0
         for blk in self.blocks:
-            with open("FLOPS", "a+") as fp:
-                fp.write("\tLayer " + str(layer) + ":\n")
+            if os.environ["LOCAL_RANK"] == 0:
+                with open("FLOPS", "a+") as fp:
+                    fp.write("\tLayer " + str(layer) + ":\n")
             tmp = blk.flops()
             flops += tmp
-            with open("FLOPS", "a+") as fp:
-                fp.write("\tLayer "+ str(layer) + " total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n")
+            if os.environ["LOCAL_RANK"] == 0:
+                with open("FLOPS", "a+") as fp:
+                    fp.write("\tLayer "+ str(layer) + " total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n")
             layer = layer + 1
         if self.downsample is not None:
             tmp = self.downsample.flops()
             flops += tmp
-            with open("FLOPS", "a+") as fp:
-                fp.write("\tDownsampling FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n")
+            if os.environ["LOCAL_RANK"] == 0:
+                with open("FLOPS", "a+") as fp:
+                    fp.write("\tDownsampling FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n")
         return flops
 
 
@@ -975,17 +981,21 @@ class SwinTransformer(nn.Module):
     def flops(self):
         flops = 0
         flops += self.patch_embed.flops()
-        with open("FLOPS", "w+") as fp:
-            fp.write("Image embedding FLOPs: " + str(round(flops/1000000,3)) + "M\n\n")
+        if os.environ["LOCAL_RANK"] == 0:
+            with open("FLOPS", "w+") as fp:
+                fp.write("Image embedding FLOPs: " + str(round(flops/1000000,3)) + "M\n\n")
         for i, layer in enumerate(self.layers):
-            with open("FLOPS", "a+") as fp:
-                fp.write("Block " + str(i) + ":\n")
+            if os.environ["LOCAL_RANK"] == 0:
+                with open("FLOPS", "a+") as fp:
+                    fp.write("Block " + str(i) + ":\n")
             tmp = layer.flops()
             flops += tmp
-            with open("FLOPS", "a+") as fp:
-                fp.write("Block " + str(i) + " total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n\n")
+            if os.environ["LOCAL_RANK"] == 0:
+                with open("FLOPS", "a+") as fp:
+                    fp.write("Block " + str(i) + " total FLOPs: " + str(round(tmp / 1000000, 3)) + "M\n\n")
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
-        with open("FLOPS", "a+") as fp:
-            fp.write("Total FLOPs: " + str(round(flops / 1000000000, 3)) + "G\n\n")
+        if os.environ["LOCAL_RANK"] == 0:
+            with open("FLOPS", "a+") as fp:
+                fp.write("Total FLOPs: " + str(round(flops / 1000000000, 3)) + "G\n\n")
         return flops
