@@ -251,7 +251,7 @@ class WindowAttention(nn.Module):
             q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # B_, H, N, C/H
             
             q = q.reshape(B_ // self.nW, self.nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
-            k = q.reshape(B_ // self.nW, self.nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
+            k = k.reshape(B_ // self.nW, self.nW, self.num_heads, N, C // self.num_heads).transpose(1,2).mean(3) # B_/nW, H, nW, C/H
             
             attn = q @ k.transpose(-1, -2) * self.scale # B_ / nW, H, nW, nW
             
