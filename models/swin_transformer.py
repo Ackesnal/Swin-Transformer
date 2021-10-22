@@ -307,6 +307,8 @@ class WindowAttention(nn.Module):
         elif self.mode == 4:
             # qkv = self.qkv(x)
             flops += N * self.dim * 3 * self.dim
+            # qk mean
+            flops += N * self.dim * 2
             # attn = (q @ k.transpose(-2, -1))
             flops += self.num_heads * self.nW * (self.dim // self.num_heads) * self.nW // self.nW
             #  x = (attn @ v)
