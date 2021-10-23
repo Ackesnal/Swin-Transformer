@@ -396,26 +396,26 @@ class SwinTransformerBlock(nn.Module):
         elif self.multi_attn:
             # 4 种 multi-channel attention 的 swin transformer
             # self.norm1 = norm_layer(dim)
-            self.norm1 = nn.GroupNorm(4, dim)
+            self.norm1 = nn.GroupNorm(3, dim)
             # self.norm2 = norm_layer(dim)
             # self.norm2 = nn.GroupNorm(4, dim)
             
-            spatial_dim = dim // 4
+            spatial_dim = dim // 3
             if self.shift_size > 0:
                 nW = (self.input_resolution[0] // self.window_size + 1) * (self.input_resolution[1] // self.window_size + 1)
             else:
                 nW = (self.input_resolution[0] // self.window_size) * (self.input_resolution[1] // self.window_size)
             self.attn1 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
-                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3)
+                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1, nW = nW)
                                                                        
             self.attn2 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
-                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 1)
+                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 2, nW = nW)
                 
             """self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
                                          qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4)"""
                                          
             self.attn3 = WindowAttention(spatial_dim, window_size=self.window_size, num_heads=num_heads // 3, qkv_bias=qkv_bias, 
-                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 4, nW = nW)
+                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 3, nW = nW)
             
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
             self.activate = nn.GELU()
@@ -528,11 +528,10 @@ class SwinTransformerBlock(nn.Module):
             x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
             
             # calculate and concat windows
-            x_1 = self.attn1(x_windows[:, :, :C//4])
-            x_2 = self.attn2(x_windows[:, :, C//4:C//2], mask = self.attn_mask)
-            x_3 = self.attn3(x_windows[:, :, C//2:C*3//4])
-            x_4 = x_windows[:, :, C*3//4:]
-            x_windows = torch.cat((x_1, x_2, x_3, x_4), dim = 2)
+            x_1 = self.attn1(x_windows[:, :, :C//3], mask = self.attn_mask)
+            x_2 = self.attn2(x_windows[:, :, C//3:C*2//3])
+            x_3 = self.attn3(x_windows[:, :, C*2//3:])
+            x_windows = torch.cat((x_1, x_2, x_3), dim = 2)
             
             x_windows = x_windows.view(-1, self.window_size, self.window_size, C) # nW*B, window_size, window_size, C
             
