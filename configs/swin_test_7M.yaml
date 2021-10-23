@@ -4,6 +4,6 @@ MODEL:
   DROP_PATH_RATE: 0.05
   SWIN:
     EMBED_DIM: 96
-    DEPTHS: [ 2, 2, 18, 2 ]
+    DEPTHS: [ 2, 2, 18, 4 ]
     NUM_HEADS: [ 6, 12, 24, 48 ]
     WINDOW_SIZE: 7
