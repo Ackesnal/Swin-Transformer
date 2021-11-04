@@ -465,8 +465,8 @@ class SwinTransformerBlock(nn.Module):
             x = x.view(B, H * W, C)
     
             # FFN
-            x = shortcut + self.drop_path(x)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            x = shortcut / 2 + self.drop_path(x)
+            x = x / 2 + self.drop_path(self.mlp(self.norm2(x)))
     
             return x
             
