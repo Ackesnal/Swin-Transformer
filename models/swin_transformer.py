@@ -506,9 +506,9 @@ class SwinTransformerBlock(nn.Module):
             x = x.view(B, H * W, C//2)
     
             # FFN
-            x = shortcut / 2 + self.drop_path(x)
-            x = x / 2 + self.drop_path(self.mlp(self.norm2(x)))
-            x = torch.cat((x, idle), dim = 2).reshape(B, L, 2, C//2).transpose(-1, -2).reshape(B, L, C)
+            x = shortcut + self.drop_path(x)
+            result = self.drop_path(self.mlp(self.norm2(x)))
+            x = torch.cat((x + result, idle + result), dim = 2).reshape(B, L, 2, C//2).transpose(-1, -2).reshape(B, L, C)
     
             return x
 
