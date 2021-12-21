@@ -427,8 +427,9 @@ class SwinTransformerBlock(nn.Module):
                 attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-1000.0)).masked_fill(attn_mask == 0, float(0.0))
             else:
                 attn_mask = None
-    
+            
             self.register_buffer("attn_mask", attn_mask)
+            self.norm3 = norm_layer(dim * 2)
               
     def forward(self, x):
         if not self.multi_attn:
@@ -507,8 +508,8 @@ class SwinTransformerBlock(nn.Module):
     
             # FFN
             x = shortcut + self.drop_path(x)
-            result = self.drop_path(self.mlp(self.norm2(x)))
-            x = torch.cat((x + result, idle + result), dim = 2).reshape(B, L, 2, C//2).transpose(-1, -2).reshape(B, L, C)
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            x = self.norm3(torch.cat((x , idle), dim = 2)).reshape(B, L, 2, C//2).transpose(-1, -2).reshape(B, L, C)
     
             return x
 
@@ -534,6 +535,8 @@ class SwinTransformerBlock(nn.Module):
         
         # norm2
         flops += self.dim * H * W
+        # norm3
+        flops += self.dim * 2 * H * W
         return flops
 
 
