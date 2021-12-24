@@ -340,7 +340,7 @@ class SwinTransformerBlock(nn.Module):
     
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, layer=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, multi_attn = False, same_attn = False):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, shuffle = False):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -348,8 +348,7 @@ class SwinTransformerBlock(nn.Module):
         self.window_size = window_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
-        self.multi_attn = multi_attn
-        self.same_attn = same_attn
+        self.shuffle = shuffle
         self.layer = layer
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
@@ -357,8 +356,8 @@ class SwinTransformerBlock(nn.Module):
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
         
-        if not self.multi_attn:
-            # 原本的 swin transformer
+        if not self.shuffle:
+            # original swin transformer
             self.norm1 = norm_layer(dim)
             self.attn = WindowAttention(dim, window_size=self.window_size, num_heads=num_heads, qkv_bias=qkv_bias, 
                                         qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, mode = 0)
@@ -393,8 +392,8 @@ class SwinTransformerBlock(nn.Module):
             self.register_buffer("attn_mask", attn_mask)
         
         
-        elif self.multi_attn:
-            # 原本的 swin transformer
+        elif self.shuffle:
+            # shuffled swin transformer
             dim = dim // 2
             self.dim = dim 
             self.norm1 = norm_layer(dim)
@@ -429,10 +428,9 @@ class SwinTransformerBlock(nn.Module):
                 attn_mask = None
             
             self.register_buffer("attn_mask", attn_mask)
-            self.norm3 = norm_layer(dim * 2)
               
     def forward(self, x):
-        if not self.multi_attn:
+        if not self.shuffle:
             H, W = self.input_resolution
             B, L, C = x.shape
             assert L == H * W, "input feature has wrong size"
@@ -471,7 +469,7 @@ class SwinTransformerBlock(nn.Module):
     
             return x
             
-        elif self.multi_attn:
+        elif self.shuffle:
             H, W = self.input_resolution
             B, L, C = x.shape
             assert L == H * W, "input feature has wrong size"
@@ -507,9 +505,9 @@ class SwinTransformerBlock(nn.Module):
             x = x.view(B, H * W, C//2)
     
             # FFN
-            x = shortcut + self.drop_path(x)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
-            x = self.norm3(torch.cat((x , idle), dim = 2)).reshape(B, L, 2, C//2).transpose(-1, -2).reshape(B, L, C)
+            x = shortcut / 2 + self.drop_path(x)
+            x = x / 2+ self.drop_path(self.mlp(self.norm2(x)))
+            x = torch.cat((x , idle), dim = 2).reshape(B, L, 2, C//2).transpose(-1, -2).reshape(B, L, C)
     
             return x
 
@@ -524,7 +522,7 @@ class SwinTransformerBlock(nn.Module):
         flops += self.dim * H * W
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
-        if self.multi_attn:
+        if self.shuffle:
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # proj
             flops += 2 * self.dim * self.dim * self.mlp_ratio * H * W
@@ -532,11 +530,8 @@ class SwinTransformerBlock(nn.Module):
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # proj
             flops += 2 * self.dim * self.dim * self.mlp_ratio * H * W
-        
         # norm2
         flops += self.dim * H * W
-        # norm3
-        flops += self.dim * 2 * H * W
         return flops
 
 
@@ -549,16 +544,15 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, multi_attn = False):
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, shuffle = False):
         super().__init__()
         self.input_resolution = input_resolution
-        if not multi_attn:
-            self.multi_attn = False
+        self.shuffle = shuffle
+        if not shuffle:
             self.dim = dim
             self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
             self.norm = norm_layer(4 * dim)
         else:
-            self.multi_attn = True
             dim = dim // 2
             self.dim = dim
             self.reduction_1 = nn.Linear(4 * dim, 2 * dim, bias=False)
@@ -575,7 +569,7 @@ class PatchMerging(nn.Module):
         assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
         
-        if not self.multi_attn:
+        if not self.shuffle:
             x = x.view(B, H, W, C)
         
             x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
@@ -623,7 +617,7 @@ class PatchMerging(nn.Module):
         H, W = self.input_resolution
         flops = H * W * self.dim
         flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
-        if self.multi_attn:
+        if self.shuffle:
             flops = flops * 2
         return flops
 
@@ -650,14 +644,14 @@ class BasicLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop=0., attn_drop=0., drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, 
-                 multi_attn = False, same_attn = False, layer=0):
+                 shuffle = False, layer=0):
 
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
-        self.multi_attn = multi_attn
+        self.shuffle = shuffle
 
         # build blocks
         if type(window_size) == int:
@@ -667,13 +661,12 @@ class BasicLayer(nn.Module):
                                                               mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                                                               drop=drop, attn_drop=attn_drop,
                                                               drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                                              norm_layer = norm_layer, layer = layer,
-                                                              multi_attn = multi_attn, same_attn = same_attn)
+                                                              norm_layer = norm_layer, layer = layer, shuffle = shuffle)
                                          for i in range(depth)])
       
         # patch merging layer
         if downsample is not None:
-            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer, multi_attn = multi_attn)
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer, shuffle = shuffle)
         else:
             self.downsample = None
 
@@ -782,7 +775,7 @@ class SwinTransformer(nn.Module):
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, multi_attn = False, same_attn = False,**kwargs):
+                 use_checkpoint=False, shuffle = False, **kwargs):
         super().__init__()
 
         self.num_classes = num_classes
@@ -793,7 +786,7 @@ class SwinTransformer(nn.Module):
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
         self.window_size = window_size
-        self.multi_attn = multi_attn
+        self.shuffle = shuffle
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
@@ -828,7 +821,7 @@ class SwinTransformer(nn.Module):
                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                norm_layer=norm_layer, layer = i_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                               use_checkpoint=use_checkpoint, multi_attn = multi_attn, same_attn = same_attn)
+                               use_checkpoint=use_checkpoint, shuffle = shuffle)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
@@ -877,12 +870,8 @@ class SwinTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-        """x0 = x[:, :x.shape[1]//4]
-        x1 = x[:, x.shape[1]//4:x.shape[1]//2]
-        x2 = x[:, x.shape[1]//2:3*x.shape[1]//4]
-        x3 = x[:, 3*x.shape[1]//4:] """
         x = self.head(x)
-        return [x]#, self.subhead(x0), self.subhead(x1), self.subhead(x2), self.subhead(x3)]
+        return [x]
 
     def flops(self):
         flops = 0
