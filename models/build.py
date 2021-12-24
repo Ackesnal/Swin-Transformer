@@ -29,6 +29,7 @@ def build_model(config):
                                 ape=config.MODEL.SWIN.APE,
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+                                shuffle=config.MODEL.SHUFFLE)
     elif model_type == 'swin_mlp':
         model = SwinMLP(img_size=config.DATA.IMG_SIZE,
                         patch_size=config.MODEL.SWIN_MLP.PATCH_SIZE,
@@ -44,7 +45,7 @@ def build_model(config):
                         ape=config.MODEL.SWIN_MLP.APE,
                         patch_norm=config.MODEL.SWIN_MLP.PATCH_NORM,
                         use_checkpoint=config.TRAIN.USE_CHECKPOINT,
-                        shuffle=config.MODEL.SHUFFLE,)
+                        shuffle=config.MODEL.SHUFFLE)
     else:
         raise NotImplementedError(f"Unkown model: {model_type}")
 
