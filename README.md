@@ -107,7 +107,7 @@ python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> main.py
 --cfg <config-file> --resume <checkpoint> --data-path <imagenet-path> --shuffle True
 ```
 
-- For example, when you evaluate Swin-XTi:
+- For example, when you evaluate shuffled Swin-XTi:
 
   ```
   python -m torch.distributed.launch --nproc_per_node 2 main.py --eval --cfg configs/swin_eXtraTiny_shuffle.yaml \
@@ -124,7 +124,7 @@ python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> main.py
 [--batch-size <batch-size-per-gpu> --output <output-directory> --tag <job-tag>]
 ```
 
-- For example, when you train Swin-XTi:
+- For example, when you train shuffled Swin-XTi:
   ```
   python -m torch.distributed.launch --nproc_per_node 2 main.py --cfg configs/swin_eXtraTiny_shuffle.yaml \
   --data-path /PATH/TO/YOUR/DATA --shuffle True --batch-size 1024 --output /output/shuffle_swin_extratiny
