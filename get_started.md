@@ -109,7 +109,7 @@ python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> main.py
 
 ### Training from scratch
 
-To train a `Swin Transformer` on ImageNet from scratch, run:
+To train a `Channel Swin Transformer` on ImageNet from scratch, run:
 
 ```bash
 python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> main.py \ 
