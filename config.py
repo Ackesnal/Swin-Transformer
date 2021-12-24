@@ -71,8 +71,7 @@ _C.MODEL.SWIN.QKV_BIAS = True
 _C.MODEL.SWIN.QK_SCALE = None
 _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
-_C.MODEL.SWIN.MULTI_ATTN = False
-_C.MODEL.SWIN.SAME_ATTN = False
+_C.MODEL.SWIN.SHUFFLE = False
 
 # Swin MLP parameters
 _C.MODEL.SWIN_MLP = CN()
@@ -85,7 +84,7 @@ _C.MODEL.SWIN_MLP.WINDOW_SIZE = 7
 _C.MODEL.SWIN_MLP.MLP_RATIO = 4.
 _C.MODEL.SWIN_MLP.APE = False
 _C.MODEL.SWIN_MLP.PATCH_NORM = True
-_C.MODEL.SWIN_MLP.MULTI_ATTN = False
+_C.MODEL.SWIN_MLP.SHUFFLE = False
 
 # -----------------------------------------------------------------------------
 # Training settings
@@ -237,28 +236,9 @@ def update_config(config, args):
             args.window_size=eval(args.window_size)
         config.MODEL.SWIN.WINDOW_SIZE = args.window_size
         config.MODEL.SWIN_MLP.WINDOW_SIZE = args.window_size
-    if args.multi_attn:
-        if type(args.multi_attn) == str:
-            if args.multi_attn.strip().lower() == "true":
-                config.MODEL.SWIN.MULTI_ATTN = True
-                config.MODEL.SWIN_MLP.MULTI_ATTN = True
-            elif args.multi_attn.strip().lower() == "false":
-                config.MODEL.SWIN.MULTI_ATTN = False
-                config.MODEL.SWIN_MLP.MULTI_ATTN = False
-        elif type(args.multi_attn) == bool:
-            config.MODEL.SWIN.MULTI_ATTN = args.multi_attn
-            config.MODEL.SWIN_MLP.MULTI_ATTN = args.multi_attn
-    if args.same_attn:
-        if type(args.same_attn) == str:
-            if args.same_attn.strip().lower() == "true":
-                config.MODEL.SWIN.SAME_ATTN = True
-                config.MODEL.SWIN_MLP.SAME_ATTN = True
-            elif args.same_attn.strip().lower() == "false":
-                config.MODEL.SWIN.SAME_ATTN = False
-                config.MODEL.SWIN_MLP.SAME_ATTN = False
-        elif type(args.same_attn) == bool:
-            config.MODEL.SWIN.SAME_ATTN = args.same_attn
-            config.MODEL.SWIN_MLP.SAME_ATTN = args.same_attn
+    if args.shuffle:
+        config.MODEL.SWIN.SHUFFLE = True
+        config.MODEL.SWIN_MLP.SHUFFLE = True
             
     # set local rank for distributed training
     if "SLURM_LOCALID" in os.environ and args.local_rank == -1:
