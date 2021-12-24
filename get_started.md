@@ -106,6 +106,9 @@ To evaluate a `Channel Swin Transformer` on ImageNet val, run:
 python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> main.py --eval \
 --cfg <config-file> --resume <checkpoint> --data-path <imagenet-path> --shuffle True
 ```
+- For example, when you evaluate Swin-XTi:
+  - python -m torch.distributed.launch --nproc_per_node 2 main.py --eval --cfg configs/swin_eXtraTiny_shuffle.yaml \
+    --data-path /PATH/TO/YOUR/DATA --resume swin_eXtraTiny_shuffle.pth --shuffle True
 
 ### Training from scratch
 
