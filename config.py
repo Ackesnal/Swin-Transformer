@@ -46,6 +46,9 @@ _C.MODEL = CN()
 _C.MODEL.TYPE = 'swin'
 # Model name
 _C.MODEL.NAME = 'swin_tiny_patch4_window7_224'
+# Pretrained weight from checkpoint, could be imagenet22k pretrained weight
+# could be overwritten by command line argument
+_C.MODEL.PRETRAINED = ''
 # Checkpoint to resume, could be overwritten by command line argument
 _C.MODEL.RESUME = ''
 # Number of classes, overwritten in data preparation
@@ -70,6 +73,7 @@ _C.MODEL.SWIN.QKV_BIAS = True
 _C.MODEL.SWIN.QK_SCALE = None
 _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
+_C.MODEL.SWIN.SHUFFLE = False
 
 # Swin MLP parameters
 _C.MODEL.SWIN_MLP = CN()
@@ -88,7 +92,7 @@ _C.MODEL.SWIN_MLP.PATCH_NORM = True
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 _C.TRAIN.START_EPOCH = 0
-_C.TRAIN.EPOCHS = 50
+_C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
 _C.TRAIN.BASE_LR = 5e-4
@@ -156,6 +160,8 @@ _C.AUG.MIXUP_MODE = 'batch'
 _C.TEST = CN()
 # Whether to use center crop when testing
 _C.TEST.CROP = True
+# Whether to use SequentialSampler as validation sampler
+_C.TEST.SEQUENTIAL = False
 
 # -----------------------------------------------------------------------------
 # Misc
@@ -212,6 +218,8 @@ def update_config(config, args):
         config.DATA.ZIP_MODE = True
     if args.cache_mode:
         config.DATA.CACHE_MODE = args.cache_mode
+    if args.pretrained:
+        config.MODEL.PRETRAINED = args.pretrained
     if args.resume:
         config.MODEL.RESUME = args.resume
     if args.accumulation_steps:
@@ -228,11 +236,7 @@ def update_config(config, args):
         config.EVAL_MODE = True
     if args.throughput:
         config.THROUGHPUT_MODE = True
-    if args.window_size:
-        if type(args.window_size) == str:
-            args.window_size=eval(args.window_size)
-        config.MODEL.SWIN.WINDOW_SIZE = args.window_size
-        config.MODEL.SWIN_MLP.WINDOW_SIZE = args.window_size
+
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank
 
