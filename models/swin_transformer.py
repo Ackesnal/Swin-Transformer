@@ -676,8 +676,9 @@ class SwinTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
+        feature = x
         x = self.head(x)
-        return x
+        return x, feature
 
     def flops(self):
         flops = 0
