@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+import torch.nn.functional as F
 
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
@@ -122,7 +123,7 @@ def main(config):
 
     if config.MODEL.RESUME:
         max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
-        model_without_ddp.shuffle_weights()
+        model_without_ddp.shuffle_weights()  
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
@@ -130,19 +131,29 @@ def main(config):
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
+        model_without_ddp.shuffle_weights()
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
 
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
         return
-
+    
+    # teacher_config = config
+    # teacher_config.defrost()
+    # teacher_config.MODEL.SWIN.SHUFFLE = False
+    # teacher_config.freeze()
+    # teacher_model = build_model(teacher_config)
+    # teacher_model.load_state_dict(torch.load("swin_tiny_patch4_window7_224.pth")['model'])
+    # teacher_model.cuda()
+    teacher_model = None
+    
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
+        train_one_epoch(config, model, teacher_model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
 
@@ -154,9 +165,10 @@ def main(config):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info('Training time {}'.format(total_time_str))
+    
+    
 
-
-def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
+def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
     model.train()
     optimizer.zero_grad()
 
@@ -175,9 +187,18 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
             samples, targets = mixup_fn(samples, targets)
 
         outputs = model(samples)
-
+        #with torch.no_grad():
+            #teacher_outputs = teacher_model(samples)
+            
         if config.TRAIN.ACCUMULATION_STEPS > 1:
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets) + F.kl_div(F.log_softmax(outputs, dim=-1),
+                                                          F.log_softmax(teacher_outputs, dim=-1),
+                                                          reduction='batchmean',
+                                                          log_target=True)
+            print(criterion(outputs, targets), F.kl_div(F.log_softmax(outputs, dim=-1),
+                                                          F.log_softmax(teacher_outputs, dim=-1),
+                                                          reduction='batchmean',
+                                                          log_target=True))
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -197,6 +218,10 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 optimizer.zero_grad()
                 lr_scheduler.step_update(epoch * num_steps + idx)
         else:
+            # loss = criterion(outputs, targets) + F.kl_div(F.log_softmax(outputs, dim=-1),
+            #                                               F.log_softmax(teacher_outputs, dim=-1),
+            #                                               reduction='batchmean',
+            #                                               log_target=True) * 2
             loss = criterion(outputs, targets)
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":

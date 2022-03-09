@@ -29,7 +29,7 @@ class Mlp(nn.Module):
         x = self.drop(x)
         return x
     
-    def shuffle_weights():
+    def shuffle_weights(self):
         print("yes")
 
 
@@ -159,7 +159,7 @@ class WindowAttention(nn.Module):
         flops += N * self.dim * self.dim
         return flops
         
-    def shuffle_weights():
+    def shuffle_weights(self):
         print("yes")
 
 
@@ -192,21 +192,45 @@ class SwinTransformerBlock(nn.Module):
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
         self.shuffle = shuffle
+        
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
+        
+        if self.shuffle:
+            self.norm1 = norm_layer(dim//2+num_heads)
+            self.attn = WindowAttention(
+                dim//2+num_heads, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+    
+            self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+            self.norm2 = norm_layer(dim//2+num_heads)
+            mlp_hidden_dim = int((dim//2+num_heads) * mlp_ratio)
+            self.mlp = Mlp(in_features=dim//2+num_heads, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+            
+            """
+            self.norms = norm_layer(dim//2)
+            self.norme = norm_layer(num_heads)
+            self.shrink = nn.Linear(dim//2, num_heads)
+            self.expand = nn.Linear(num_heads, dim//2)
+            trunc_normal_(self.shrink.weight, std=.02)
+            nn.init.constant_(self.shrink.bias, 0)
+            trunc_normal_(self.expand.weight, std=.02)
+            nn.init.constant_(self.expand.bias, 0)
+            """
+        else:
+            self.norm1 = norm_layer(dim)
+            self.attn = WindowAttention(
+                dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+    
+            self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+            self.norm2 = norm_layer(dim)
+            mlp_hidden_dim = int(dim * mlp_ratio)
+            self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-        self.norm1 = norm_layer(dim)
-        self.attn = WindowAttention(
-            dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
-
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         if self.shift_size > 0:
             # calculate attention mask for SW-MSA
@@ -239,46 +263,92 @@ class SwinTransformerBlock(nn.Module):
         assert L == H * W, "input feature has wrong size"
         
         if self.shuffle:
-            x_idle = x[:,:,C//2:]
-            x = x[:,:,:C//2]
+            # define new C
+            new_C = C//2+self.num_heads
+            
+            # generate attended x => B*L*(C//2+num_head)
+            x_attn = x[:,:,:C//2]
+            # idle_channels = self.shrink(self.norms(x[:,:,C//2:])) # B, L, head
+            idle_channels = x[:,:,C//2:].mean(-1).reshape(B,L,1).expand(B, L, self.num_heads)
+            x_attn = torch.cat((x_attn, idle_channels), dim = -1)
+            x_attn = x_attn.reshape(B, L, new_C//self.num_heads, self.num_heads).transpose(-1,-2).reshape(B,L,new_C)
+            
+            # Swin Transformer
+            shortcut = x_attn
+            x_attn = self.norm1(x_attn)
+            x_attn = x_attn.view(B, H, W, new_C)
+            
+            if self.shift_size > 0:
+                shifted_x = torch.roll(x_attn, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            else:
+                shifted_x = x_attn
+            
+            # partition windows
+            x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+            x_windows = x_windows.view(-1, self.window_size * self.window_size, new_C)  # nW*B, window_size*window_size, C
+    
+            # W-MSA/SW-MSA
+            attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+    
+            # merge windows
+            attn_windows = attn_windows.view(-1, self.window_size, self.window_size, new_C)
+            shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+    
+            # reverse cyclic shift
+            if self.shift_size > 0:
+                x_attn = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            else:
+                x_attn = shifted_x
+            x_attn = x_attn.view(B, H * W, new_C)
+            
+            x_attn = shortcut + self.drop_path(x_attn)
+            x_attn = x_attn + self.drop_path(self.mlp(self.norm2(x_attn)))
+            
+            # update idled channels
+            x_attn = x_attn.reshape(B, L, self.num_heads, new_C//self.num_heads).transpose(-1,-2).reshape(B,L,new_C)
+            # idle_channels = self.expand(self.norme(x_attn[:,:,C//2:]))
+            idle_channels = x[:,:,C//2:].mean(-1).reshape(B,L,1).expand(B, L, C//2)
+            x_attn = x_attn[:,:,:C//2]
+            x_idle = x[:,:,C//2:] + idle_channels
+            
+            x = torch.cat((x_attn, x_idle), dim = -1)
+            
+            # shuffle
+            x = x.reshape(B, L, 2, C//2).transpose(-1,-2).reshape(B, L, C)
         
-        shortcut = x
-        x = self.norm1(x)
-        x = x.view(B, H, W, C)
-        
-        # cyclic shift
-        if self.shift_size > 0:
-            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
         else:
-            shifted_x = x
-
-        # partition windows
-        x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
-
-        # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
-
-        # merge windows
-        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
-        shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
-
-        # reverse cyclic shift
-        if self.shift_size > 0:
-            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
-        else:
-            x = shifted_x
-        x = x.view(B, H * W, C)
-
-        # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        
-        # Shuffle
-        if self.shuffle:
-            x = torch.cat((x, x_idle), dim=-1)
-            x = x.reshape(B, L, C//2, 2).transpose(-1,-2).reshape(B,L,C)
-        
+            shortcut = x
+            x = self.norm1(x)
+            x = x.view(B, H, W, C)
+            
+            # cyclic shift
+            if self.shift_size > 0:
+                shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            else:
+                shifted_x = x
+    
+            # partition windows
+            x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+            x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+    
+            # W-MSA/SW-MSA
+            attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+    
+            # merge windows
+            attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+            shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+    
+            # reverse cyclic shift
+            if self.shift_size > 0:
+                x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            else:
+                x = shifted_x
+            x = x.view(B, H * W, C)
+    
+            # FFN
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            
         return x
 
     def extra_repr(self) -> str:
@@ -288,22 +358,40 @@ class SwinTransformerBlock(nn.Module):
     def flops(self):
         flops = 0
         H, W = self.input_resolution
-        # norm1
-        flops += self.dim * H * W
-        # W-MSA/SW-MSA
-        nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.window_size * self.window_size)
-        # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
-        # norm2
-        flops += self.dim * H * W
-        return flops
-        
-    def shuffle_weights():
-        self.attn.shuffle_weights()
-        self.mlp.shuffle_weights()
-        return
-
+        if self.shuffle:
+            """
+            # norms
+            flops += self.dim/2 * H * W
+            # shrink
+            flops += H * W * self.dim/2 * self.num_heads
+            """
+            # norm1
+            flops += (self.dim/2+self.num_heads) * H * W
+            # W-MSA/SW-MSA
+            nW = H * W / self.window_size / self.window_size
+            flops += nW * self.attn.flops(self.window_size * self.window_size)
+            # mlp
+            flops += 2 * H * W * (self.dim/2+self.num_heads) * (self.dim/2+self.num_heads) * self.mlp_ratio
+            # norm2
+            flops += (self.dim/2+self.num_heads) * H * W
+            """
+            # norme
+            flops += self.num_heads * H * W
+            # expand
+            flops += self.num_heads * H * W * self.dim/2
+            """
+            return flops
+        else:
+            # norm1
+            flops += self.dim * H * W
+            # W-MSA/SW-MSA
+            nW = H * W / self.window_size / self.window_size
+            flops += nW * self.attn.flops(self.window_size * self.window_size)
+            # mlp
+            flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
+            # norm2
+            flops += self.dim * H * W
+            return flops
 
 class PatchMerging(nn.Module):
     r""" Patch Merging Layer.
@@ -351,7 +439,6 @@ class PatchMerging(nn.Module):
         flops = H * W * self.dim
         flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
         return flops
-
 
 class BasicLayer(nn.Module):
     """ A basic Swin Transformer layer for one stage.
@@ -423,11 +510,6 @@ class BasicLayer(nn.Module):
             flops += self.downsample.flops()
         return flops
         
-    def shuffle_weights(self):
-        for blk in self.blocks:
-            blk.shuffle_weights()
-        return
-
 class PatchEmbed(nn.Module):
     r""" Image to Patch Embedding
     Args:
@@ -605,8 +687,3 @@ class SwinTransformer(nn.Module):
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
-    
-    def shuffle_weights(self):
-        for i, layer in enumerate(self.layers):
-            layer.shuffle_weights()
-        return
