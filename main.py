@@ -123,7 +123,6 @@ def main(config):
 
     if config.MODEL.RESUME:
         max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
-        model_without_ddp.shuffle_weights()  
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
@@ -131,7 +130,6 @@ def main(config):
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
-        model_without_ddp.shuffle_weights()
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
 
@@ -224,7 +222,7 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                                 log_target=True) * 2
             cls_loss = criterion(outputs, targets)
             # print(kd_loss.item(), ftr_loss.item(), cls_loss.item())
-            loss = kd_loss * 0.5 + ftr_loss * 5.0 + cls_loss * 1.0
+            loss = kd_loss * 0.05 + ftr_loss * 0.5 + cls_loss * 0.1
             # loss = criterion(outputs, targets)
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":

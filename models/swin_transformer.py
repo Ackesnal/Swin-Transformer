@@ -309,7 +309,7 @@ class SwinTransformerBlock(nn.Module):
             # idle_channels = self.expand(self.norme(x_attn[:,:,C//2:]))
             idle_channels = x[:,:,C//2:].mean(-1).reshape(B,L,1).expand(B, L, C//2)
             x_attn = x_attn[:,:,:C//2]
-            x_idle = x[:,:,C//2:] + idle_channels
+            x_idle = (x[:,:,C//2:] + idle_channels) / 2
             
             x = torch.cat((x_attn, x_idle), dim = -1)
             
@@ -634,7 +634,7 @@ class SwinTransformer(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
-                               shuffle=self.shuffle)
+                               shuffle=self.shuffle if i_layer > 0 else False)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
