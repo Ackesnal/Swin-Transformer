@@ -223,7 +223,7 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                                 reduction='batchmean',
                                 log_target=True) * 2
             cls_loss = criterion(outputs, targets)
-            print(kd_loss.item(), ftr_loss.item(), cls_loss.item())
+            # print(kd_loss.item(), ftr_loss.item(), cls_loss.item())
             loss = kd_loss * 0.5 + ftr_loss * 5.0 + cls_loss * 1.0
             # loss = criterion(outputs, targets)
             optimizer.zero_grad()
@@ -281,7 +281,7 @@ def validate(config, data_loader, model):
         target = target.cuda(non_blocking=True)
 
         # compute output
-        output = model(images)
+        output, features = model(images)
 
         # measure accuracy and record loss
         loss = criterion(output, target)
