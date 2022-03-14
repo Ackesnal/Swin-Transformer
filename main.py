@@ -144,6 +144,7 @@ def main(config):
     teacher_model = build_model(teacher_config)
     teacher_model.load_state_dict(torch.load("swin_tiny_patch4_window7_224.pth")['model'])
     teacher_model.cuda()
+    teacher_model.eval()
     # teacher_model = None
     
     logger.info("Start training")
@@ -189,10 +190,16 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
             teacher_outputs, teacher_features = teacher_model(samples)
             
         if config.TRAIN.ACCUMULATION_STEPS > 1:
-            loss = criterion(outputs, targets) + F.kl_div(F.log_softmax(outputs, dim=-1),
-                                                          F.log_softmax(teacher_outputs, dim=-1),
-                                                          reduction='batchmean',
-                                                          log_target=True) * 2
+            kd_loss = F.kl_div(F.log_softmax(outputs, dim=-1),
+                               F.log_softmax(teacher_outputs, dim=-1),
+                               reduction='batchmean',
+                               log_target=True)
+            ftr_loss = F.kl_div(F.log_softmax(features, dim=-1),
+                                F.log_softmax(teacher_features, dim=-1),
+                                reduction='batchmean',
+                                log_target=True)
+            cls_loss = criterion(outputs, targets)
+            loss = kd_loss + ftr_loss * 10 + cls_loss
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -215,14 +222,13 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
             kd_loss = F.kl_div(F.log_softmax(outputs, dim=-1),
                                F.log_softmax(teacher_outputs, dim=-1),
                                reduction='batchmean',
-                               log_target=True) * 2
+                               log_target=True)
             ftr_loss = F.kl_div(F.log_softmax(features, dim=-1),
                                 F.log_softmax(teacher_features, dim=-1),
                                 reduction='batchmean',
-                                log_target=True) * 2
+                                log_target=True)
             cls_loss = criterion(outputs, targets)
-            # print(kd_loss.item(), ftr_loss.item(), cls_loss.item())
-            loss = kd_loss * 0.05 + ftr_loss * 0.5 + cls_loss * 0.1
+            loss = kd_loss + ftr_loss * 10 + cls_loss
             # loss = criterion(outputs, targets)
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":

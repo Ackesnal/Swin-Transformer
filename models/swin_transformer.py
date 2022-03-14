@@ -200,15 +200,15 @@ class SwinTransformerBlock(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
         
         if self.shuffle:
-            self.norm1 = norm_layer(dim//2+num_heads)
+            self.norm1 = norm_layer(dim//2)
             self.attn = WindowAttention(
-                dim//2+num_heads, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                dim//2, window_size=to_2tuple(self.window_size), num_heads=num_heads,
                 qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
     
             self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-            self.norm2 = norm_layer(dim//2+num_heads)
-            mlp_hidden_dim = int((dim//2+num_heads) * mlp_ratio)
-            self.mlp = Mlp(in_features=dim//2+num_heads, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+            self.norm2 = norm_layer(dim//2)
+            mlp_hidden_dim = int((dim//2) * mlp_ratio)
+            self.mlp = Mlp(in_features=dim//2, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
             
             """
             self.norms = norm_layer(dim//2)
@@ -263,20 +263,17 @@ class SwinTransformerBlock(nn.Module):
         assert L == H * W, "input feature has wrong size"
         
         if self.shuffle:
-            # define new C
-            new_C = C//2+self.num_heads
-            
             # generate attended x => B*L*(C//2+num_head)
             x_attn = x[:,:,:C//2]
             # idle_channels = self.shrink(self.norms(x[:,:,C//2:])) # B, L, head
-            idle_channels = x[:,:,C//2:].mean(-1).reshape(B,L,1).expand(B, L, self.num_heads)
-            x_attn = torch.cat((x_attn, idle_channels), dim = -1)
-            x_attn = x_attn.reshape(B, L, new_C//self.num_heads, self.num_heads).transpose(-1,-2).reshape(B,L,new_C)
+            x_idle = x[:,:,C//2:]
+            
+            x_attn = 0.5 * x_attn + 0.5 * x_idle
             
             # Swin Transformer
             shortcut = x_attn
             x_attn = self.norm1(x_attn)
-            x_attn = x_attn.view(B, H, W, new_C)
+            x_attn = x_attn.view(B, H, W, C//2)
             
             if self.shift_size > 0:
                 shifted_x = torch.roll(x_attn, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
@@ -285,13 +282,13 @@ class SwinTransformerBlock(nn.Module):
             
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-            x_windows = x_windows.view(-1, self.window_size * self.window_size, new_C)  # nW*B, window_size*window_size, C
+            x_windows = x_windows.view(-1, self.window_size * self.window_size, C//2)  # nW*B, window_size*window_size, C
     
             # W-MSA/SW-MSA
             attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
     
             # merge windows
-            attn_windows = attn_windows.view(-1, self.window_size, self.window_size, new_C)
+            attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C//2)
             shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
     
             # reverse cyclic shift
@@ -299,17 +296,13 @@ class SwinTransformerBlock(nn.Module):
                 x_attn = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
             else:
                 x_attn = shifted_x
-            x_attn = x_attn.view(B, H * W, new_C)
+            x_attn = x_attn.view(B, H * W, C//2)
             
             x_attn = shortcut + self.drop_path(x_attn)
             x_attn = x_attn + self.drop_path(self.mlp(self.norm2(x_attn)))
             
             # update idled channels
-            x_attn = x_attn.reshape(B, L, self.num_heads, new_C//self.num_heads).transpose(-1,-2).reshape(B,L,new_C)
-            # idle_channels = self.expand(self.norme(x_attn[:,:,C//2:]))
-            idle_channels = x[:,:,C//2:].mean(-1).reshape(B,L,1).expand(B, L, C//2)
-            x_attn = x_attn[:,:,:C//2]
-            x_idle = (x[:,:,C//2:] + idle_channels) / 2
+            x_idle = 0.5 * x_idle + 0.5 * x_attn
             
             x = torch.cat((x_attn, x_idle), dim = -1)
             
@@ -366,14 +359,14 @@ class SwinTransformerBlock(nn.Module):
             flops += H * W * self.dim/2 * self.num_heads
             """
             # norm1
-            flops += (self.dim/2+self.num_heads) * H * W
+            flops += (self.dim/2) * H * W
             # W-MSA/SW-MSA
             nW = H * W / self.window_size / self.window_size
             flops += nW * self.attn.flops(self.window_size * self.window_size)
             # mlp
-            flops += 2 * H * W * (self.dim/2+self.num_heads) * (self.dim/2+self.num_heads) * self.mlp_ratio
+            flops += 2 * H * W * (self.dim/2) * (self.dim/2) * self.mlp_ratio
             # norm2
-            flops += (self.dim/2+self.num_heads) * H * W
+            flops += (self.dim/2) * H * W
             """
             # norme
             flops += self.num_heads * H * W
