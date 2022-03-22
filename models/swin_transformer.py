@@ -627,7 +627,7 @@ class SwinTransformer(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
-                               shuffle=self.shuffle if i_layer not in [0,1] else False)
+                               shuffle=self.shuffle if i_layer not in [0] else False)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
