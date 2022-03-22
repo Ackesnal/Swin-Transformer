@@ -192,7 +192,7 @@ class SwinTransformerBlock(nn.Module):
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
         self.shuffle = shuffle
-        
+        print(self.shuffle)
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
@@ -268,7 +268,7 @@ class SwinTransformerBlock(nn.Module):
             # idle_channels = self.shrink(self.norms(x[:,:,C//2:])) # B, L, head
             x_idle = x[:,:,C//2:]
             
-            x_attn = 0.5 * x_attn + 0.5 * x_idle
+            x_attn = 0.8 * x_attn + 0.2 * x_idle.mean(-1, keepdim=True)
             
             # Swin Transformer
             shortcut = x_attn
@@ -302,7 +302,7 @@ class SwinTransformerBlock(nn.Module):
             x_attn = x_attn + self.drop_path(self.mlp(self.norm2(x_attn)))
             
             # update idled channels
-            x_idle = 0.5 * x_idle + 0.5 * x_attn
+            x_idle = 0.8 * x_idle + 0.2 * x_attn.mean(-1, keepdim=True)
             
             x = torch.cat((x_attn, x_idle), dim = -1)
             
@@ -627,7 +627,7 @@ class SwinTransformer(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
-                               shuffle=self.shuffle if i_layer > 0 else False)
+                               shuffle=self.shuffle if i_layer not in [0,1] else False)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)

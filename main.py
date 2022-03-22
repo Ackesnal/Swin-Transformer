@@ -137,15 +137,15 @@ def main(config):
         throughput(data_loader_val, model, logger)
         return
     
-    teacher_config = config
-    teacher_config.defrost()
-    teacher_config.MODEL.SWIN.SHUFFLE = False
-    teacher_config.freeze()
-    teacher_model = build_model(teacher_config)
-    teacher_model.load_state_dict(torch.load("swin_tiny_patch4_window7_224.pth")['model'])
-    teacher_model.cuda()
-    teacher_model.eval()
-    # teacher_model = None
+    #teacher_config = config
+    #teacher_config.defrost()
+    #teacher_config.MODEL.SWIN.SHUFFLE = False
+    #teacher_config.freeze()
+    #teacher_model = build_model(teacher_config)
+    #teacher_model.load_state_dict(torch.load("swin_tiny_patch4_window7_224.pth")['model'])
+    # teacher_model.cuda()
+    # teacher_model.eval()
+    teacher_model = None
     
     logger.info("Start training")
     start_time = time.time()
@@ -186,8 +186,8 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
             samples, targets = mixup_fn(samples, targets)
 
         outputs, features = model(samples)
-        with torch.no_grad():
-            teacher_outputs, teacher_features = teacher_model(samples)
+        # with torch.no_grad():
+        #    teacher_outputs, teacher_features = teacher_model(samples)
             
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             kd_loss = F.kl_div(F.log_softmax(outputs, dim=-1),
@@ -219,6 +219,7 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                 optimizer.zero_grad()
                 lr_scheduler.step_update(epoch * num_steps + idx)
         else:
+            """
             kd_loss = F.kl_div(F.log_softmax(outputs, dim=-1),
                                F.log_softmax(teacher_outputs, dim=-1),
                                reduction='batchmean',
@@ -227,8 +228,9 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                                 F.log_softmax(teacher_features, dim=-1),
                                 reduction='batchmean',
                                 log_target=True)
+            """
             cls_loss = criterion(outputs, targets)
-            loss = kd_loss + ftr_loss * 10 + cls_loss
+            loss = cls_loss # + kd_loss + ftr_loss * 10 
             # loss = criterion(outputs, targets)
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":
