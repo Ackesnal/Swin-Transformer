@@ -220,7 +220,7 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                 optimizer.zero_grad()
                 lr_scheduler.step_update(epoch * num_steps + idx)
         else:
-            if teacher_model in not None:
+            if teacher_model is not None:
                 kd_loss = F.kl_div(F.log_softmax(outputs, dim=-1),
                                    F.log_softmax(teacher_outputs, dim=-1),
                                    reduction='batchmean',
