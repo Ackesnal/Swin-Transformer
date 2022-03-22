@@ -200,7 +200,7 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                                 reduction='batchmean',
                                 log_target=True)
             cls_loss = criterion(outputs, targets)
-            loss = kd_loss * 2 + ftr_loss * 5 + cls_loss
+            loss = cls_loss + kd_loss + ftr_loss * 20 
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
             if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -233,7 +233,7 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                 kd_loss = 0
                 ftr_loss = 0
             cls_loss = criterion(outputs, targets)
-            loss = cls_loss + kd_loss * 2 + ftr_loss * 5
+            loss = cls_loss + kd_loss + ftr_loss * 20
             # loss = criterion(outputs, targets)
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":
