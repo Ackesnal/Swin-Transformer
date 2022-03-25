@@ -7,6 +7,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
@@ -192,7 +193,7 @@ class SwinTransformerBlock(nn.Module):
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
         self.shuffle = shuffle
-        print(self.shuffle)
+        
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
@@ -200,6 +201,7 @@ class SwinTransformerBlock(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
         
         if self.shuffle:
+            self.coefficient = nn.Parameter(torch.ones(1))
             self.norm1 = norm_layer(dim//2)
             self.attn = WindowAttention(
                 dim//2, window_size=to_2tuple(self.window_size), num_heads=num_heads,
@@ -209,17 +211,6 @@ class SwinTransformerBlock(nn.Module):
             self.norm2 = norm_layer(dim//2)
             mlp_hidden_dim = int((dim//2) * mlp_ratio)
             self.mlp = Mlp(in_features=dim//2, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-            
-            """
-            self.norms = norm_layer(dim//2)
-            self.norme = norm_layer(num_heads)
-            self.shrink = nn.Linear(dim//2, num_heads)
-            self.expand = nn.Linear(num_heads, dim//2)
-            trunc_normal_(self.shrink.weight, std=.02)
-            nn.init.constant_(self.shrink.bias, 0)
-            trunc_normal_(self.expand.weight, std=.02)
-            nn.init.constant_(self.expand.bias, 0)
-            """
         else:
             self.norm1 = norm_layer(dim)
             self.attn = WindowAttention(
@@ -263,12 +254,13 @@ class SwinTransformerBlock(nn.Module):
         assert L == H * W, "input feature has wrong size"
         
         if self.shuffle:
+            alpha = F.sigmoid(self.coefficient)
             # generate attended x => B*L*(C//2+num_head)
             x_attn = x[:,:,:C//2]
             # idle_channels = self.shrink(self.norms(x[:,:,C//2:])) # B, L, head
             x_idle = x[:,:,C//2:]
             
-            x_attn = 0.8 * x_attn + 0.2 * x_idle.mean(-1, keepdim=True)
+            x_attn = alpha * x_attn + (1 - alpha) * x_idle.mean(-1, keepdim=True)
             
             # Swin Transformer
             shortcut = x_attn
@@ -298,11 +290,11 @@ class SwinTransformerBlock(nn.Module):
                 x_attn = shifted_x
             x_attn = x_attn.view(B, H * W, C//2)
             
-            x_attn = shortcut + self.drop_path(x_attn)
-            x_attn = x_attn + self.drop_path(self.mlp(self.norm2(x_attn)))
+            x_attn = shortcut * (1 - alpha) + self.drop_path(x_attn) * alpha
+            x_attn = x_attn * (1 - alpha) + self.drop_path(self.mlp(self.norm2(x_attn))) * alpha
             
             # update idled channels
-            x_idle = 0.8 * x_idle + 0.2 * x_attn.mean(-1, keepdim=True)
+            x_idle = alpha * x_idle + (1 - alpha) * x_attn.mean(-1, keepdim=True)
             
             x = torch.cat((x_attn, x_idle), dim = -1)
             
@@ -627,13 +619,13 @@ class SwinTransformer(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
-                               shuffle=self.shuffle if i_layer not in [0] else False)
+                               shuffle=self.shuffle if i_layer not in [0,1,2] else False)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        
+        self.proj = nn.Linear(self.num_features, self.num_features) if self.shuffle else None
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -670,6 +662,8 @@ class SwinTransformer(nn.Module):
     def forward(self, x):
         x = self.forward_features(x)
         feature = x
+        if self.proj is not None:
+            feature = self.proj(feature)
         x = self.head(x)
         return x, feature
 

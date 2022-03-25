@@ -225,15 +225,14 @@ def train_one_epoch(config, model, teacher_model, criterion, data_loader, optimi
                                    F.log_softmax(teacher_outputs, dim=-1),
                                    reduction='batchmean',
                                    log_target=True)
-                ftr_loss = F.kl_div(F.log_softmax(features, dim=-1),
-                                    F.log_softmax(teacher_features, dim=-1),
-                                    reduction='batchmean',
-                                    log_target=True)
+                ftr_loss = F.mse_loss(F.normalize(features, dim = -1, p = 2), 
+                                      F.normalize(teacher_features, dim = -1, p = 2))
             else:
                 kd_loss = 0
                 ftr_loss = 0
             cls_loss = criterion(outputs, targets)
-            loss = cls_loss + kd_loss + ftr_loss * 20
+            loss = cls_loss + kd_loss + ftr_loss*2000
+            # print(cls_loss, kd_loss, ftr_loss)
             # loss = criterion(outputs, targets)
             optimizer.zero_grad()
             if config.AMP_OPT_LEVEL != "O0":
