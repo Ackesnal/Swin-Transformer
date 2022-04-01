@@ -137,15 +137,15 @@ def main(config):
         throughput(data_loader_val, model, logger)
         return
     
-    teacher_config = config
-    teacher_config.defrost()
-    teacher_config.MODEL.SWIN.SHUFFLE = False
-    teacher_config.freeze()
-    teacher_model = build_model(teacher_config)
-    teacher_model.load_state_dict(torch.load("swin_tiny_patch4_window7_224.pth")['model'])
-    teacher_model.cuda()
-    teacher_model.eval()
-    # teacher_model = None
+    # teacher_config = config
+    # teacher_config.defrost()
+    # teacher_config.MODEL.SWIN.SHUFFLE = False
+    # teacher_config.freeze()
+    # teacher_model = build_model(teacher_config)
+    # teacher_model.load_state_dict(torch.load("swin_tiny_patch4_window7_224.pth")['model'])
+    # teacher_model.cuda()
+    # teacher_model.eval()
+    teacher_model = None
     
     logger.info("Start training")
     start_time = time.time()
