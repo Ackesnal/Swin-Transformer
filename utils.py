@@ -31,7 +31,7 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, loss_scaler, logger)
             loss_scaler.load_state_dict(checkpoint['scaler'])
         logger.info(f"=> loaded successfully '{config.MODEL.RESUME}' (epoch {checkpoint['epoch']})")
         if 'max_accuracy' in checkpoint:
-            max_accuracy = checkpoint['max_accuracy']
+            max_accuracy = checkpoint['max_accuracy'] 
 
     del checkpoint
     torch.cuda.empty_cache()
