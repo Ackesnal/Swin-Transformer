@@ -5,6 +5,8 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+from tutel import system
+
 import os
 import time
 import json
@@ -12,7 +14,7 @@ import random
 import argparse
 import datetime
 import numpy as np
-
+from functools import partial
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
@@ -26,8 +28,10 @@ from data import build_loader
 from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
-from utils import load_checkpoint, load_pretrained, save_checkpoint, NativeScalerWithGradNormCount, auto_resume_helper, \
-    reduce_tensor
+from utils import NativeScalerWithGradNormCount, reduce_tensor
+from utils_moe import load_checkpoint, load_pretrained, save_checkpoint, auto_resume_helper, hook_scale_grad
+
+assert torch.__version__ >= '1.8.0', "DDP-based MoE requires Pytorch >= 1.8.0"
 
 
 def parse_option():
@@ -39,8 +43,6 @@ def parse_option():
         default=None,
         nargs='+',
     )
-
-    parser.add_argument('--window-size', default=None, help="window size")
 
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
@@ -82,13 +84,24 @@ def main(config):
     model = build_model(config)
     logger.info(str(model))
 
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"number of params: {n_parameters}")
+    # For Tutel MoE
+    for name, param in model.named_parameters():
+        if param.requires_grad == True and hasattr(param, 'skip_allreduce') and param.skip_allreduce is True:
+            model.add_param_to_skip_allreduce(name)
+            param.register_hook(partial(hook_scale_grad, dist.get_world_size()))
+            logger.info(f"[rank{dist.get_rank()}] [{name}] skip all_reduce and div {dist.get_world_size()} for grad")
+
+    n_parameters_single = sum(p.numel() * model.sharded_count if hasattr(p, 'skip_allreduce')
+                              else p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"number of params single: {n_parameters_single}")
+    n_parameters_whole = sum(p.numel() * model.sharded_count * model.global_experts if hasattr(p, 'skip_allreduce')
+                             else p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"number of params whole: {n_parameters_whole}")
     if hasattr(model, 'flops'):
         flops = model.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
 
-    model.cuda()
+    model.cuda(config.LOCAL_RANK)
     model_without_ddp = model
 
     optimizer = build_optimizer(config, model)
@@ -111,7 +124,7 @@ def main(config):
     max_accuracy = 0.0
 
     if config.TRAIN.AUTO_RESUME:
-        resume_file = auto_resume_helper(config.OUTPUT)
+        resume_file = auto_resume_helper(config.OUTPUT, config.TRAIN.MOE.SAVE_MASTER)
         if resume_file:
             if config.MODEL.RESUME:
                 logger.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
@@ -133,6 +146,8 @@ def main(config):
         load_pretrained(config, model_without_ddp, logger)
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        if config.EVAL_MODE:
+            return
 
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
@@ -141,14 +156,11 @@ def main(config):
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
-        if type(config.MODEL.SWIN.WINDOW_SIZE)==list:
-            print(model.module.change_window_size())
-    
         data_loader_train.sampler.set_epoch(epoch)
 
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler,
                         loss_scaler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        if (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, loss_scaler,
                             logger)
 
@@ -156,8 +168,8 @@ def main(config):
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         max_accuracy = max(max_accuracy, acc1)
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
-        
-
+    save_checkpoint(config, 'final', model_without_ddp, max_accuracy, optimizer, lr_scheduler, loss_scaler,
+                    logger, zero_redundancy=True)
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info('Training time {}'.format(total_time_str))
@@ -170,6 +182,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
     num_steps = len(data_loader)
     batch_time = AverageMeter()
     loss_meter = AverageMeter()
+    loss_aux_meter = AverageMeter()
+    loss_cls_meter = AverageMeter()
     norm_meter = AverageMeter()
     scaler_meter = AverageMeter()
 
@@ -183,8 +197,9 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
             samples, targets = mixup_fn(samples, targets)
 
         with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
-            outputs = model(samples)
-        loss = criterion(outputs, targets)
+            outputs, l_aux = model(samples)
+        l_cls = criterion(outputs, targets)
+        loss = l_cls + l_aux
         loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
         # this attribute is added by timm on one optimizer (adahessian)
@@ -200,12 +215,14 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         torch.cuda.synchronize()
 
         loss_meter.update(loss.item(), targets.size(0))
+        loss_cls_meter.update(l_cls.item(), targets.size(0))
+        loss_aux_meter.update(l_aux if isinstance(l_aux, float) else l_aux.item(), targets.size(0))
         if grad_norm is not None:  # loss_scaler return None if not update
             norm_meter.update(grad_norm)
         scaler_meter.update(loss_scale_value)
         batch_time.update(time.time() - end)
         end = time.time()
-        
+
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]['lr']
             wd = optimizer.param_groups[0]['weight_decay']
@@ -216,6 +233,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t wd {wd:.4f}\t'
                 f'time {batch_time.val:.4f} ({batch_time.avg:.4f})\t'
                 f'loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
+                f'loss-cls {loss_cls_meter.val:.4f} ({loss_cls_meter.avg:.4f})\t'
+                f'loss-aux {loss_aux_meter.val:.4f} ({loss_aux_meter.avg:.4f})\t'
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'loss_scale {scaler_meter.val:.4f} ({scaler_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
@@ -229,7 +248,8 @@ def validate(config, data_loader, model):
     model.eval()
 
     batch_time = AverageMeter()
-    loss_meter = AverageMeter()
+    loss_cls_meter = AverageMeter()
+    loss_aux_meter = AverageMeter()
     acc1_meter = AverageMeter()
     acc5_meter = AverageMeter()
 
@@ -240,17 +260,17 @@ def validate(config, data_loader, model):
 
         # compute output
         with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
-            output = model(images)
+            output, l_aux = model(images)
 
         # measure accuracy and record loss
-        loss = criterion(output, target)
+        l_cls = criterion(output, target)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
         acc1 = reduce_tensor(acc1)
         acc5 = reduce_tensor(acc5)
-        loss = reduce_tensor(loss)
 
-        loss_meter.update(loss.item(), target.size(0))
+        loss_cls_meter.update(l_cls.item(), target.size(0))
+        loss_aux_meter.update(l_aux if isinstance(l_aux, float) else l_aux.item(), target.size(0))
         acc1_meter.update(acc1.item(), target.size(0))
         acc5_meter.update(acc5.item(), target.size(0))
 
@@ -263,12 +283,13 @@ def validate(config, data_loader, model):
             logger.info(
                 f'Test: [{idx}/{len(data_loader)}]\t'
                 f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                f'Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
+                f'Loss-Cls {loss_cls_meter.val:.4f} ({loss_cls_meter.avg:.4f})\t'
+                f'Loss-Aux {loss_aux_meter.val:.4f} ({loss_aux_meter.avg:.4f})\t'
                 f'Acc@1 {acc1_meter.val:.3f} ({acc1_meter.avg:.3f})\t'
                 f'Acc@5 {acc5_meter.val:.3f} ({acc5_meter.avg:.3f})\t'
                 f'Mem {memory_used:.0f}MB')
     logger.info(f' * Acc@1 {acc1_meter.avg:.3f} Acc@5 {acc5_meter.avg:.3f}')
-    return acc1_meter.avg, acc5_meter.avg, loss_meter.avg
+    return acc1_meter.avg, acc5_meter.avg, loss_cls_meter.avg
 
 
 @torch.no_grad()
