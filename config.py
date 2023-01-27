@@ -73,6 +73,7 @@ _C.MODEL.SWIN.QKV_BIAS = True
 _C.MODEL.SWIN.QK_SCALE = None
 _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
+_C.MODEL.SWIN.KEEP_RATIO = 0.7
 
 # Swin Transformer V2 parameters
 _C.MODEL.SWINV2 = CN()
@@ -135,12 +136,12 @@ _C.MODEL.SWIN_MLP.PATCH_NORM = True
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 _C.TRAIN.START_EPOCH = 0
-_C.TRAIN.EPOCHS = 50
-_C.TRAIN.WARMUP_EPOCHS = 20
+_C.TRAIN.EPOCHS = 30
+_C.TRAIN.WARMUP_EPOCHS = 5
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 5e-4
+_C.TRAIN.BASE_LR = 2e-5
 _C.TRAIN.WARMUP_LR = 5e-7
-_C.TRAIN.MIN_LR = 5e-6
+_C.TRAIN.MIN_LR = 2e-6
 # Clip gradient norm
 _C.TRAIN.CLIP_GRAD = 5.0
 # Auto resume from latest checkpoint

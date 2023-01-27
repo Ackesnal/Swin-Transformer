@@ -8,6 +8,7 @@
 import os
 import time
 import json
+import math
 import random
 import argparse
 import datetime
@@ -19,6 +20,8 @@ import torch.distributed as dist
 
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
+
+from loss import DistillationLoss
 
 from config import get_config
 from models import build_model
@@ -75,6 +78,23 @@ def parse_option():
     return args, config
 
 
+def adjust_learning_rate(param_groups, init_lr, min_lr, step, max_step, warming_up_step=2, warmup_predictor=False, base_multi=0.1):
+    cos_lr = (math.cos(step / max_step * math.pi) + 1) * 0.5
+    cos_lr = min_lr + cos_lr * (init_lr - min_lr)
+    if warmup_predictor and step < 1:
+        cos_lr = init_lr * 0.01
+    if step < warming_up_step:
+        backbone_lr = 0
+    else:
+        backbone_lr = min(init_lr * 0.01, cos_lr)
+    print('## Using lr  %.7f for BACKBONE, cosine lr = %.7f for PREDICTOR' % (backbone_lr, cos_lr))
+    for param_group in param_groups:
+        if param_group['name'] == 'predictor':
+            param_group['lr'] = cos_lr
+        else:
+            param_group['lr'] = backbone_lr # init_lr * 0.01 # cos_lr * base_multi
+
+
 def main(config):
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
@@ -90,7 +110,7 @@ def main(config):
 
     model.cuda()
     model_without_ddp = model
-
+    
     optimizer = build_optimizer(config, model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     loss_scaler = NativeScalerWithGradNormCount()
@@ -107,6 +127,19 @@ def main(config):
         criterion = LabelSmoothingCrossEntropy(smoothing=config.MODEL.LABEL_SMOOTHING)
     else:
         criterion = torch.nn.CrossEntropyLoss()
+    
+    if config.MODEL.SWIN.KEEP_RATIO < 1:
+        config_t = config
+        config_t.defrost()
+        config_t.MODEL.SWIN.KEEP_RATIO = 1
+        config_t.EVAL_MODE = True
+        config_t.freeze()
+        model_t = build_model(config)
+        model_t.cuda()
+        model_t_without_ddp = model_t
+        model_t = torch.nn.parallel.DistributedDataParallel(model_t, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+        load_pretrained(config, model_t_without_ddp, logger)
+        criterion = DistillationLoss(criterion, model_t, keep_ratio=config.MODEL.SWIN.KEEP_RATIO, distillation_type = "soft", alpha=0.5, tau=1)
 
     max_accuracy = 0.0
 
@@ -131,8 +164,8 @@ def main(config):
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
-        acc1, acc5, loss = validate(config, data_loader_val, model)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        #acc1, acc5, loss = validate(config, data_loader_val, model)
+        #logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
 
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
@@ -145,9 +178,11 @@ def main(config):
             print(model.module.change_window_size())
     
         data_loader_train.sampler.set_epoch(epoch)
-
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler,
-                        loss_scaler)
+        print(g["name"] for g in optimizer.param_groups)
+        
+        adjust_learning_rate(optimizer.param_groups, config.TRAIN.BASE_LR, config.TRAIN.MIN_LR, epoch, config.TRAIN.EPOCHS, warmup_predictor=False, warming_up_step=config.TRAIN.WARMUP_EPOCHS, base_multi=0.1)
+        
+        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler, loss_scaler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, loss_scaler,
                             logger)
@@ -184,7 +219,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
         with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
             outputs = model(samples)
-        loss = criterion(outputs, targets)
+            loss = criterion(samples, outputs, targets)
         loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
         # this attribute is added by timm on one optimizer (adahessian)

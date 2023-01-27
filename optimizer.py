@@ -8,6 +8,28 @@
 from torch import optim as optim
 
 
+def get_param_groups(model, weight_decay):
+    decay = []
+    no_decay = []
+    predictor = []
+    for name, param in model.named_parameters():
+        if 'predictor' in name:
+            predictor.append(param)
+        elif not param.requires_grad:
+            continue  # frozen weights
+        elif 'cls_token' in name or 'pos_embed' in name:
+            continue  # frozen weights
+        elif len(param.shape) == 1 or name.endswith(".bias"):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    return [
+        {'params': predictor, 'weight_decay': weight_decay, 'name': 'predictor'},
+        {'params': no_decay, 'weight_decay': 0., 'name': 'base_no_decay'},
+        {'params': decay, 'weight_decay': weight_decay, 'name': 'base_decay'}
+        ]
+
+
 def build_optimizer(config, model):
     """
     Build optimizer, set weight decay of normalization to 0 by default.
@@ -18,15 +40,17 @@ def build_optimizer(config, model):
         skip = model.no_weight_decay()
     if hasattr(model, 'no_weight_decay_keywords'):
         skip_keywords = model.no_weight_decay_keywords()
-    parameters = set_weight_decay(model, skip, skip_keywords)
+    
+    parameter_group = get_param_groups(model, config.TRAIN.WEIGHT_DECAY)
+    # parameters = set_weight_decay(model, skip, skip_keywords)
 
     opt_lower = config.TRAIN.OPTIMIZER.NAME.lower()
     optimizer = None
     if opt_lower == 'sgd':
-        optimizer = optim.SGD(parameters, momentum=config.TRAIN.OPTIMIZER.MOMENTUM, nesterov=True,
+        optimizer = optim.SGD(parameter_group, momentum=config.TRAIN.OPTIMIZER.MOMENTUM, nesterov=True,
                               lr=config.TRAIN.BASE_LR, weight_decay=config.TRAIN.WEIGHT_DECAY)
     elif opt_lower == 'adamw':
-        optimizer = optim.AdamW(parameters, eps=config.TRAIN.OPTIMIZER.EPS, betas=config.TRAIN.OPTIMIZER.BETAS,
+        optimizer = optim.AdamW(parameter_group, eps=config.TRAIN.OPTIMIZER.EPS, betas=config.TRAIN.OPTIMIZER.BETAS,
                                 lr=config.TRAIN.BASE_LR, weight_decay=config.TRAIN.WEIGHT_DECAY)
 
     return optimizer
