@@ -372,7 +372,7 @@ class PatchMerging(nn.Module):
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
 
-    def forward(self, x, mask=None):
+    def forward(self, x):
         """
         x: B, H*W, C
         """
@@ -381,9 +381,6 @@ class PatchMerging(nn.Module):
         assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
         
-        if mask is not None:
-            x = x #* mask
-
         x = x.view(B, H, W, C)
 
         x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
@@ -461,24 +458,11 @@ class BasicLayer(nn.Module):
             
         self.keep_ratio = keep_ratio
         if self.keep_ratio < 1:
-            self.score_predictor = PredictorLG(dim)
+            self.score_predictor = PredictorLG(dim) for _ in range(depth) # nn.ModuleList([PredictorLG(dim) for _ in range(depth)])
         
 
-    def forward(self, x):
-        if self.keep_ratio < 1:
-            mask = torch.ones(x.shape[0], x.shape[1], 1, dtype=x.dtype, device=x.device)
-            pred_score = self.score_predictor(x, mask)
-            mask = F.gumbel_softmax(pred_score, hard=True)[:, :, 0:1] # B,N,1
-            
-            for blk in self.blocks:
-                if self.use_checkpoint:
-                    x = checkpoint.checkpoint(blk, x, mask)
-                else:
-                    x = blk(x, mask)
-            if self.downsample is not None:
-                x = self.downsample(x, mask)
-            return x, mask
-        else:    
+    def forward(self, x, flag=False):
+        if not flag:    
             for blk in self.blocks:
                 if self.use_checkpoint:
                     x = checkpoint.checkpoint(blk, x)
@@ -487,6 +471,55 @@ class BasicLayer(nn.Module):
             if self.downsample is not None:
                 x = self.downsample(x)
             return x
+        
+        else:
+            
+            #dynamic
+            out_masks = []
+            if self.use_checkpoint:
+                pred_score = checkpoint.checkpoint(self.score_predictor, x, torch.ones(x.shape[0], x.shape[1], 1, dtype=x.dtype, device=x.device))
+            else:
+                pred_score = self.score_predictor(x, torch.ones(x.shape[0], x.shape[1], 1, dtype=x.dtype, device=x.device))
+            mask = F.gumbel_softmax(pred_score, hard=True)[:, :, 0:1] # B,N,1
+            if self.training == False:
+                pred_score = pred_score[:,:,0]
+                num_kept = int(x.shape[1]*self.keep_ratio)
+                cut_score = torch.sort(pred_score, dim=1, descending=True)[0][:, num_kept:num_kept+1].repeat(1, pred_score.shape[1]) # B, N
+                mask = mask.squeeze().masked_fill(pred_score >= cut_score, 1).masked_fill(pred_score < cut_score, 0).unsqueeze(-1)
+            out_masks.append(mask)
+            
+            for i, blk in enumerate(self.blocks):
+                if self.use_checkpoint:
+                    x = checkpoint.checkpoint(blk, x, mask)
+                else:
+                    x = blk(x, mask)
+                    
+            if self.downsample is not None:
+                x = self.downsample(x * mask)
+            return x, out_masks
+            """
+            out_masks = []
+            for i, blk in enumerate(self.blocks):
+                if self.use_checkpoint:
+                    pred_score = checkpoint.checkpoint(self.score_predictor[i], x, torch.ones(x.shape[0], x.shape[1], 1, dtype=x.dtype, device=x.device))
+                else:
+                    pred_score = self.score_predictor[i](x, torch.ones(x.shape[0], x.shape[1], 1, dtype=x.dtype, device=x.device))
+                mask = F.gumbel_softmax(pred_score, hard=True)[:, :, 0:1] # B,N,1
+                if self.training == False:
+                    pred_score = pred_score[:,:,0]
+                    num_kept = int(x.shape[1]*self.keep_ratio)
+                    cut_score = torch.sort(pred_score, dim=1, descending=True)[0][:, num_kept:num_kept+1].repeat(1, pred_score.shape[1]) # B, N
+                    mask = mask.squeeze().masked_fill(pred_score >= cut_score, 1).masked_fill(pred_score < cut_score, 0).unsqueeze(-1)
+                out_masks.append(mask)
+                if self.use_checkpoint:
+                    x = checkpoint.checkpoint(blk, x, mask)
+                else:
+                    x = blk(x, mask)
+                    
+            if self.downsample is not None:
+                x = self.downsample(x)
+            return x, out_masks
+            """
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
@@ -609,6 +642,7 @@ class SwinTransformer(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
         # build layers
+        flag=True
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
@@ -625,7 +659,8 @@ class SwinTransformer(nn.Module):
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
                                fused_window_process=fused_window_process,
-                               keep_ratio=keep_ratio)
+                               keep_ratio=1 if flag else keep_ratio)
+            flag=False
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
@@ -660,12 +695,16 @@ class SwinTransformer(nn.Module):
         
         if self.keep_ratio < 1:
             out_masks = []
-        for layer in self.layers:
-            if self.keep_ratio < 1:
-                x, mask = layer(x)
-                out_masks.append(mask)
-            else:
+        for i, layer in enumerate(self.layers):
+            if i == 0:
                 x = layer(x)
+            else:
+                if self.keep_ratio < 1:
+                    x, out = layer(x, True)
+                    out_masks.extend(out)
+                else:
+                    x = layer(x)
+                    
 
         x = self.norm(x)  # B L C
         x = self.avgpool(x.transpose(1, 2))  # B C 1

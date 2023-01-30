@@ -73,7 +73,7 @@ _C.MODEL.SWIN.QKV_BIAS = True
 _C.MODEL.SWIN.QK_SCALE = None
 _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
-_C.MODEL.SWIN.KEEP_RATIO = 0.7
+_C.MODEL.SWIN.KEEP_RATIO = 0.5
 
 # Swin Transformer V2 parameters
 _C.MODEL.SWINV2 = CN()
@@ -139,9 +139,9 @@ _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 30
 _C.TRAIN.WARMUP_EPOCHS = 5
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 2e-5
-_C.TRAIN.WARMUP_LR = 5e-7
-_C.TRAIN.MIN_LR = 2e-6
+_C.TRAIN.BASE_LR = 5e-4
+_C.TRAIN.WARMUP_LR = 1e-6
+_C.TRAIN.MIN_LR = 1e-5
 # Clip gradient norm
 _C.TRAIN.CLIP_GRAD = 5.0
 # Auto resume from latest checkpoint
@@ -226,7 +226,7 @@ _C.TAG = 'default'
 # Frequency to save checkpoint
 _C.SAVE_FREQ = 1
 # Frequency to logging info
-_C.PRINT_FREQ = 10
+_C.PRINT_FREQ = 200
 # Fixed random seed
 _C.SEED = 0
 # Perform evaluation only, overwritten by command line argument

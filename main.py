@@ -178,7 +178,6 @@ def main(config):
             print(model.module.change_window_size())
     
         data_loader_train.sampler.set_epoch(epoch)
-        print(g["name"] for g in optimizer.param_groups)
         
         adjust_learning_rate(optimizer.param_groups, config.TRAIN.BASE_LR, config.TRAIN.MIN_LR, epoch, config.TRAIN.EPOCHS, warmup_predictor=False, warming_up_step=config.TRAIN.WARMUP_EPOCHS, base_multi=0.1)
         

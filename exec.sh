@@ -1,17 +1,12 @@
 #!/bin/bash
 #SBATCH -N 1
 #SBATCH -n 1
-#SBATCH --job-name=Ackesnal
+#SBATCH --job-name=0.5idleswin
 #SBATCH --partition=gpu
-#SBATCH --cpus-per-task=10
-#SBATCH --gres=gpu:tesla-smx2:4
-#SBATCH --mem-per-cpu=10G
-#SBATCH -o tiny_original_50epoch_out.txt
-#SBATCH -e err.txt
+#SBATCH --cpus-per-task=32
+#SBATCH --gres=gpu:2
+#SBATCH --mem-per-cpu=2G
+#SBATCH -o idle_swin_r0.5_new_out.txt
+#SBATCH -e idle_swin_r0.5_new_err.txt
 
-source activate swin
-module load cuda/10.1.243
-module load gnu7/7.3.0
-module load mvapich2
-
-srun python -m torch.distributed.launch --nproc_per_node 4 --master_port 10162 main.py --cfg configs/swin_test_tiny.yaml --data-path ../BossNAS/data/imagenet/ --batch-size 256 --output ./output/original
+python -m torch.distributed.launch --nproc_per_node 2 --master_port 10121 main.py --cfg configs/swin/swin_tiny_patch4_window7_224.yaml --data-path ../data/imagenet/ --batch-size 256 --output ./output/idle_swin_r0.5_new --pretrained ./swin_tiny_patch4_window7_224.pth --use-checkpoint --accumulation-steps 2
