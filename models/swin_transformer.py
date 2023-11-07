@@ -458,7 +458,7 @@ class BasicLayer(nn.Module):
             
         self.keep_ratio = keep_ratio
         if self.keep_ratio < 1:
-            self.score_predictor = PredictorLG(dim) for _ in range(depth) # nn.ModuleList([PredictorLG(dim) for _ in range(depth)])
+            self.score_predictor = nn.ModuleList([PredictorLG(dim) for _ in range(depth)]) # PredictorLG(dim)
         
 
     def forward(self, x, flag=False):
@@ -473,7 +473,7 @@ class BasicLayer(nn.Module):
             return x
         
         else:
-            
+            """
             #dynamic
             out_masks = []
             if self.use_checkpoint:
@@ -519,7 +519,7 @@ class BasicLayer(nn.Module):
             if self.downsample is not None:
                 x = self.downsample(x)
             return x, out_masks
-            """
+            
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
