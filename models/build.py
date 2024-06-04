@@ -9,10 +9,28 @@ from .swin_transformer import SwinTransformer
 from .swin_transformer_v2 import SwinTransformerV2
 from .swin_transformer_moe import SwinTransformerMoE
 from .swin_mlp import SwinMLP
+from .simmim import build_simmim
 
 
-def build_model(config):
+def build_model(config, is_pretrain=False):
     model_type = config.MODEL.TYPE
+
+    # accelerate layernorm
+    if config.FUSED_LAYERNORM:
+        try:
+            import apex as amp
+            layernorm = amp.normalization.FusedLayerNorm
+        except:
+            layernorm = None
+            print("To use FusedLayerNorm, please install apex.")
+    else:
+        import torch.nn as nn
+        layernorm = nn.LayerNorm
+
+    if is_pretrain:
+        model = build_simmim(config)
+        return model
+
     if model_type == 'swin':
         model = SwinTransformer(img_size=config.DATA.IMG_SIZE,
                                 patch_size=config.MODEL.SWIN.PATCH_SIZE,
@@ -28,8 +46,10 @@ def build_model(config):
                                 drop_rate=config.MODEL.DROP_RATE,
                                 drop_path_rate=config.MODEL.DROP_PATH_RATE,
                                 ape=config.MODEL.SWIN.APE,
+                                norm_layer=layernorm,
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
-                                use_checkpoint=config.TRAIN.USE_CHECKPOINT)
+                                use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+                                fused_window_process=config.FUSED_WINDOW_PROCESS)
     elif model_type == 'swinv2':
         model = SwinTransformerV2(img_size=config.DATA.IMG_SIZE,
                                   patch_size=config.MODEL.SWINV2.PATCH_SIZE,
